@@ -80,8 +80,16 @@ def _ingest_into_temp(c: duckdb.DuckDBPyConnection, json_path: Path) -> None:
             COALESCE(digital, false) AS digital,
             lang,
             layout,
-            TRY_CAST(image_uris.normal AS VARCHAR) AS image_normal,
-            TRY_CAST(image_uris.art_crop AS VARCHAR) AS image_art_crop,
+            TRY_CAST(
+                COALESCE(image_uris.normal,
+                         card_faces[1].image_uris.normal)
+                AS VARCHAR
+            ) AS image_normal,
+            TRY_CAST(
+                COALESCE(image_uris.art_crop,
+                         card_faces[1].image_uris.art_crop)
+                AS VARCHAR
+            ) AS image_art_crop,
             TRY_CAST(prices.usd AS DOUBLE) AS price_usd,
             COALESCE(nonfoil, false) AS nonfoil,
             COALESCE(foil, false) AS foil,
