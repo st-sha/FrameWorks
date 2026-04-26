@@ -1,0 +1,22 @@
+services:
+  deckaesthetics:
+    build: .
+    image: deckaesthetics:latest
+    container_name: deckaesthetics
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      SCRYFALL_REFRESH_HOURS: "24"
+      # Cron schedule (UTC) for Scryfall refresh checks. Default polls hourly
+      # at :15 from 09:00 to 13:00 UTC (a window around Scryfall's daily
+      # ~09:00 UTC bulk update). Set to "" to fall back to SCRYFALL_REFRESH_HOURS.
+      SCRYFALL_REFRESH_CRON: "15 9-13 * * *"
+      SCRYFALL_BULK_TYPE: "default_cards"
+      LOG_LEVEL: "INFO"
+      # ADMIN_TOKEN: "change-me"   # uncomment to require token on /api/admin/*
+    volumes:
+      - ./data:/data
+      # Optional: mount custom rulesets dir to add new aesthetics without rebuilding
+      # - ./rulesets:/app/rulesets:ro

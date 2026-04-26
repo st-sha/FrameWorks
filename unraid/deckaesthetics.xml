@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Frameworks</Name>
+  <Repository>deckaesthetics:latest</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <Overview>Analyze MTG decklists for available frame / border / aesthetic printings. Snappy local web UI backed by a cached Scryfall bulk dataset.</Overview>
+  <Category>Tools: Other:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Description>Paste a decklist (any format) or a Moxfield/Archidekt/Melee URL and see, per aesthetic, how many cards in the deck have at least one printing matching that frame, border, or treatment. Aesthetics are defined in YAML files mounted at /app/rulesets so new categories can be added without rebuilding.</Description>
+  <Networking>
+    <Mode>bridge</Mode>
+    <Publish>
+      <Port>
+        <HostPort>8080</HostPort>
+        <ContainerPort>8080</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/appdata/deckaesthetics</HostDir>
+      <ContainerDir>/data</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+  <Environment>
+    <Variable>
+      <Value>8080</Value>
+      <Name>PORT</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>24</Value>
+      <Name>SCRYFALL_REFRESH_HOURS</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>15 9-13 * * *</Value>
+      <Name>SCRYFALL_REFRESH_CRON</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>default_cards</Value>
+      <Name>SCRYFALL_BULK_TYPE</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>INFO</Value>
+      <Name>LOG_LEVEL</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>ADMIN_TOKEN</Name>
+      <Mode/>
+    </Variable>
+  </Environment>
+  <Config Name="WebUI" Target="8080" Default="8080" Mode="tcp" Description="Web UI port" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/deckaesthetics" Mode="rw" Description="Scryfall cache + DuckDB index" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/deckaesthetics</Config>
+  <Config Name="Refresh interval (hours)" Target="SCRYFALL_REFRESH_HOURS" Default="24" Mode="" Description="Fallback interval if SCRYFALL_REFRESH_CRON is empty" Type="Variable" Display="advanced" Required="false" Mask="false">24</Config>
+  <Config Name="Refresh cron (UTC)" Target="SCRYFALL_REFRESH_CRON" Default="15 9-13 * * *" Mode="" Description="Cron schedule (UTC) for Scryfall refresh checks. Default polls hourly at :15 from 09:00–13:00 UTC, a window around Scryfall's daily ~09:00 UTC bulk update. Empty = use interval." Type="Variable" Display="always" Required="false" Mask="false">15 9-13 * * *</Config>
+  <Config Name="Scryfall bulk type" Target="SCRYFALL_BULK_TYPE" Default="default_cards" Mode="" Description="default_cards (recommended) or all_cards (every language)" Type="Variable" Display="advanced" Required="false" Mask="false">default_cards</Config>
+  <Config Name="Admin token" Target="ADMIN_TOKEN" Default="" Mode="" Description="Optional: if set, /api/admin/* endpoints require X-Admin-Token header" Type="Variable" Display="advanced" Required="false" Mask="true"/>
+  <Config Name="Log level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="DEBUG / INFO / WARNING / ERROR" Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+</Container>

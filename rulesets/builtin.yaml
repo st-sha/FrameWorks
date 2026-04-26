@@ -1,0 +1,328 @@
+# Built-in aesthetic definitions for DeckAesthetics.
+# Drop additional *.yaml files into this directory to add more.
+# See backend/app/rulesets.py for the predicate schema.
+
+aesthetics:
+  # ---- Frame eras ---------------------------------------------------------
+  - id: frame_1993
+    label: "Original Frame (1993)"
+    description: "Alpha-era frame used through 6th Edition / Mercadian Masques."
+    group: "Frame Era"
+    match:
+      equals: { frame: "1993" }
+
+  - id: frame_1997
+    label: "Updated Frame (1997)"
+    description: "The 'classic' frame from Mirage through Scourge."
+    group: "Frame Era"
+    match:
+      equals: { frame: "1997" }
+
+  - id: frame_2003
+    label: "Modern Frame (2003)"
+    description: "Mirrodin-era frame, used through Magic 2014."
+    group: "Frame Era"
+    match:
+      equals: { frame: "2003" }
+
+  - id: frame_2015
+    label: "M15 Frame (2015)"
+    description: "Current-era frame introduced in Magic 2015."
+    group: "Frame Era"
+    match:
+      equals: { frame: "2015" }
+
+  - id: frame_future
+    label: "Future Sight Frame"
+    description: "Future-shifted frame from the Future Sight set."
+    group: "Frame Era"
+    match:
+      equals: { frame: "future" }
+
+  # ---- Borders ------------------------------------------------------------
+  - id: border_black
+    label: "Black Border"
+    group: "Border"
+    match:
+      equals: { border_color: "black" }
+
+  - id: border_white
+    label: "White Border"
+    group: "Border"
+    match:
+      equals: { border_color: "white" }
+
+  - id: border_silver
+    label: "Silver Border"
+    description: "Un-set / acorn-stamped joke cards."
+    group: "Border"
+    match:
+      equals: { border_color: "silver" }
+
+  - id: border_gold
+    label: "Gold Border"
+    description: "World Championship reprints."
+    group: "Border"
+    match:
+      equals: { border_color: "gold" }
+
+  - id: borderless
+    label: "Borderless"
+    description: "Borderless treatment (no traditional card border)."
+    group: "Border"
+    match:
+      any:
+        - equals: { border_color: "borderless" }
+        - contains: { frame_effects: "borderless" }
+
+  # ---- Treatments / frame effects ----------------------------------------
+  - id: showcase
+    label: "Showcase"
+    description: "Set-themed alternate frame treatment."
+    group: "Treatment"
+    match:
+      contains: { frame_effects: "showcase" }
+
+  - id: extended_art
+    label: "Extended Art"
+    description: "Art extends to the card edges; thin border preserved."
+    group: "Treatment"
+    match:
+      contains: { frame_effects: "extendedart" }
+
+  - id: full_art
+    label: "Full Art"
+    description: "Art covers the entire card face (e.g. Zendikar full-art lands)."
+    group: "Treatment"
+    match:
+      equals: { full_art: true }
+
+  - id: textless
+    label: "Textless"
+    description: "Printed without rules text."
+    group: "Treatment"
+    match:
+      equals: { textless: true }
+
+  - id: etched
+    label: "Foil Etched"
+    description: "Etched-foil treatment introduced in Commander Legends."
+    group: "Treatment"
+    match:
+      contains: { frame_effects: "etched" }
+
+  - id: inverted
+    label: "Inverted Frame"
+    description: "Inverted-color frame treatment (e.g. Ikoria showcase godzillas)."
+    group: "Treatment"
+    match:
+      contains: { frame_effects: "inverted" }
+
+  - id: nyx_touched
+    label: "Nyx-Touched"
+    description: "Theros enchantment Nyx-style frame."
+    group: "Treatment"
+    match:
+      contains: { frame_effects: "nyxtouched" }
+
+  - id: legendary_crown
+    label: "Legendary Crown"
+    description: "Dominaria-onward legendary crown treatment."
+    group: "Treatment"
+    match:
+      contains: { frame_effects: "legendary" }
+
+  # ---- Showcase Treatments (specific frames) -----------------------------
+  # These are the well-known named showcase / boosterfun variants. They
+  # appear as their own group so users can target a specific treatment
+  # rather than the generic "Showcase" bucket.
+  - id: showcase_mystical_archive
+    label: "Mystical Archive"
+    description: "STX bonus sheet treatment (Strixhaven Mystical Archive)."
+    group: "Showcase Treatment"
+    match:
+      equals: { set: "sta" }
+
+  - id: showcase_retro_schematic
+    label: "Retro Schematic"
+    description: "Brothers' War retro artifacts schematic showcase."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "schematic" }
+
+  - id: showcase_neon_ink
+    label: "Neon Ink"
+    description: "Kamigawa: Neon Dynasty neon-ink Hidetsugu showcase."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "neonink" }
+
+  - id: showcase_phyrexian
+    label: "Phyrexian"
+    description: "Phyrexian-language showcase printings."
+    group: "Showcase Treatment"
+    match:
+      any:
+        - equals: { lang: "ph" }
+        - contains: { promo_types: "phyrexian" }
+
+  - id: showcase_anime
+    label: "Anime"
+    description: "Anime-style showcase art (Kamigawa: Neon Dynasty)."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "ninjaframe" }
+
+  - id: showcase_ampersand
+    label: "Ampersand"
+    description: "D&D ampersand showcase (Adventures in the Forgotten Realms)."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "ampersand" }
+
+  - id: showcase_gilded
+    label: "Gilded"
+    description: "Gilded foil treatment (Streets of New Capenna)."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "gilded" }
+
+  - id: showcase_textured
+    label: "Textured Foil"
+    description: "Textured foil treatment."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "textured" }
+
+  - id: showcase_oilslick
+    label: "Oil Slick"
+    description: "Oil-slick foil treatment (Phyrexia: All Will Be One)."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "oilslick" }
+
+  - id: showcase_step_and_compleat
+    label: "Step-and-Compleat Foil"
+    description: "Compleat-Φ pattern foil (Phyrexia: All Will Be One)."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "stepandcompleat" }
+
+  - id: showcase_galaxy
+    label: "Galaxy Foil"
+    description: "Galaxy-foil treatment (Unfinity)."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "galaxyfoil" }
+
+  - id: showcase_halofoil
+    label: "Halo Foil"
+    description: "Halo-foil treatment (March of the Machine)."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "halofoil" }
+
+  - id: showcase_concept_praetors
+    label: "Concept Praetors"
+    description: "Concept-art praetors showcase (Phyrexia: All Will Be One)."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "conceptpraetors" }
+
+  - id: showcase_ravnica_city
+    label: "Ravnica Cityscape"
+    description: "Ravnica Remastered cityscape borderless treatment."
+    group: "Showcase Treatment"
+    match:
+      contains: { promo_types: "ravnicacity" }
+
+  # ---- Origin / Universe -------------------------------------------------
+  - id: universes_within
+    label: "Universes Within"
+    description: "Magic in-universe printing — the literal complement of Universes Beyond."
+    group: "Origin"
+    match:
+      not:
+        any:
+          - contains: { promo_types: "universesbeyond" }
+          - contains: { promo_types: "sourcematerial" }
+          - equals: { security_stamp: "triangle" }
+          - equals: { set: "ltr" }
+          - equals: { set: "ltc" }
+          - equals: { set: "who" }
+          - equals: { set: "40k" }
+          - equals: { set: "pip" }
+          - equals: { set: "fin" }
+          - equals: { set: "acr" }
+          - equals: { set: "tla" }
+
+  - id: universes_beyond
+    label: "Universes Beyond"
+    description: "Crossover printings (LOTR, Doctor Who, 40K, Final Fantasy, etc.)."
+    group: "Origin"
+    match:
+      any:
+        - contains: { promo_types: "universesbeyond" }
+        - contains: { promo_types: "sourcematerial" }
+        - equals: { security_stamp: "triangle" }
+        - equals: { set: "ltr" }
+        - equals: { set: "ltc" }
+        - equals: { set: "who" }
+        - equals: { set: "40k" }
+        - equals: { set: "pip" }
+        - equals: { set: "fin" }
+        - equals: { set: "acr" }
+        - equals: { set: "tla" }
+
+  # ---- Other categories --------------------------------------------------
+  # Catch-all for treatments that don't slot neatly into a frame / border /
+  # treatment / origin bucket. Add new aesthetics here freely.
+  - id: promo_retro
+    label: "Retro Frame Promo"
+    description: "M15-era card reprinted with the 1997 retro frame treatment."
+    group: "Other"
+    match:
+      contains: { promo_types: "retro" }
+
+  - id: promo_serialized
+    label: "Serialized"
+    description: "Numbered serialized treatment."
+    group: "Other"
+    match:
+      contains: { promo_types: "serialized" }
+
+  - id: prerelease_stamp
+    label: "Prerelease Stamp"
+    description: "Date-stamped prerelease promo."
+    group: "Other"
+    match:
+      contains: { promo_types: "prerelease" }
+
+  - id: promo_pack
+    label: "Promo Pack"
+    description: "Planeswalker-stamped promo-pack printing."
+    group: "Other"
+    match:
+      contains: { promo_types: "promopack" }
+
+  - id: bundle_promo
+    label: "Bundle Promo"
+    description: "Set bundle / box-topper printing."
+    group: "Other"
+    match:
+      contains: { promo_types: "bundle" }
+
+  - id: oversized
+    label: "Oversized"
+    description: "Oversized commander / planechase / archenemy printing."
+    group: "Other"
+    match:
+      contains: { promo_types: "oversized" }
+
+  # ---- Origin ------------------------------------------------------------
+  - id: paper_only
+    label: "Paper Printing Available"
+    description: "At least one non-digital printing exists."
+    group: "Origin"
+    match:
+      equals: { digital: false }
