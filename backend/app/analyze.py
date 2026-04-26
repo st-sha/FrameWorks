@@ -148,16 +148,26 @@ def _python_sort_keys(printing_strategy: list[str] | str | None):
 
     The first key always demotes digital printings (paper-first). Then the
     user's specs in order. Then the tiebreaker: english first, latest first.
+
+    We dedupe by *full spec* (not just `kind`) so the user can specify
+    multiple values of the same kind in priority order — e.g.
+    `frame:1993, frame:1997, first` means "prefer 1993 frame, then 1997
+    frame, then earliest printing." This mirrors the SQL behaviour and is
+    needed for things like "Original frame" + "Updated frame" stacking
+    in the Preferred Printing list.
     """
     if isinstance(printing_strategy, str):
         printing_strategy = [printing_strategy]
     keys = [lambda p: 0 if not p.get("digital") else 1]
-    seen = {"paper"}
+    seen: set[str] = {"paper"}  # the implicit paper-first key
     for s in printing_strategy or []:
-        kind = s.split(":", 1)[0]
-        if kind in seen:
+        if s in seen:
             continue
-        seen.add(kind)
+        # Special case: an explicit "paper" spec is a no-op since we already
+        # demoted digital. Skip without consuming priority.
+        if s == "paper":
+            continue
+        seen.add(s)
         k = _py_sort_key_for(s)
         if k is not None:
             keys.append(k)
