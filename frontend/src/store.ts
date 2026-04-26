@@ -296,6 +296,33 @@ export const useStore = create<State>()(
           ...p,
           selectedAesthetics: sel,
           galleryAesthetics: gallery,
+          // Defensive: persisted state from older builds may be missing
+          // these fields. Spread above would set them to `undefined`,
+          // which breaks `.includes` / `.length` calls downstream.
+          gallerySpotExcluded: Array.isArray(p.gallerySpotExcluded)
+            ? p.gallerySpotExcluded
+            : current.gallerySpotExcluded,
+          collapsedFilterGroups: Array.isArray(p.collapsedFilterGroups)
+            ? p.collapsedFilterGroups
+            : current.collapsedFilterGroups,
+          collapsedSpotlightGroups: Array.isArray(p.collapsedSpotlightGroups)
+            ? p.collapsedSpotlightGroups
+            : current.collapsedSpotlightGroups,
+          coverageCollapsedGroups: Array.isArray(p.coverageCollapsedGroups)
+            ? p.coverageCollapsedGroups
+            : current.coverageCollapsedGroups,
+          cardSizeByView:
+            p.cardSizeByView && typeof p.cardSizeByView === 'object'
+              ? p.cardSizeByView
+              : current.cardSizeByView,
+          spotlightBarCollapsed:
+            typeof p.spotlightBarCollapsed === 'boolean'
+              ? p.spotlightBarCollapsed
+              : current.spotlightBarCollapsed,
+          coverageDensity:
+            p.coverageDensity === 'compact' || p.coverageDensity === 'default' || p.coverageDensity === 'comfortable'
+              ? p.coverageDensity
+              : current.coverageDensity,
           // Removed view modes — fall back to a sensible default.
           view:
             (p.view as string) === 'matrix' ||
@@ -516,9 +543,13 @@ export function cardMatches(
   card: PerCardRow,
   selectionsByGroupMap: Map<string, Set<string>>,
   groupAllIdsMap?: Map<string, Set<string>>,
+  /** Pre-built `Set(card.available_aesthetics)` — pass this when calling
+   *  cardMatches in a tight loop to avoid re-constructing the set per
+   *  call. Built lazily otherwise. */
+  cardAvailSet?: Set<string>,
 ): boolean {
   if (!card.resolved) return false;
-  const cardSet = new Set(card.available_aesthetics);
+  const cardSet = cardAvailSet ?? new Set(card.available_aesthetics);
   for (const [groupName, groupSel] of selectionsByGroupMap) {
     if (groupSel.size === 0) continue;
     // Skip-if-inapplicable: if the card has nothing in this group at all,
@@ -548,7 +579,114 @@ export function filterCards(cards: PerCardRow[], selected: Set<string>, aestheti
   const sbg = selectionsByGroup(selected, aesthetics);
   if (sbg.size === 0) return cards.filter((c) => c.resolved);
   const allByGroup = allIdsByGroup(aesthetics);
-  return cards.filter((c) => cardMatches(c, sbg, allByGroup));
+  // Pre-build per-card Set once instead of inside cardMatches per call.
+  return cards.filter((c) => {
+    if (!c.resolved) return false;
+    return cardMatches(c, sbg, allByGroup, new Set(c.available_aesthetics));
+  });
+}
+
+/**
+ * Bulk: for each aesthetic id, return the set of cards that would be
+ * visible if that chip were toggled into its OPPOSITE state under the
+ * current selection. Computes the per-card available_aesthetics set once
+ * up-front (avoiding `cards × aesthetics` set-construction) and the
+ * groupAll map once. Replaces what was 41 separate filterCards() calls
+ * in the App's chipCounts useMemo.
+ */
+export function chipToggleCounts(
+  cards: PerCardRow[],
+  selected: Set<string>,
+  aesthetics: Aesthetic[],
+): Map<string, number> {
+  const out = new Map<string, number>();
+  if (cards.length === 0) {
+    for (const a of aesthetics) out.set(a.id, 0);
+    return out;
+  }
+  const resolvedCards = cards.filter((c) => c.resolved);
+  const availSets: Set<string>[] = resolvedCards.map(
+    (c) => new Set(c.available_aesthetics),
+  );
+  const allByGroup = allIdsByGroup(aesthetics);
+  // Build the base SBG once.
+  const baseSbg = selectionsByGroup(selected, aesthetics);
+  const idToGroup = new Map<string, string>();
+  for (const a of aesthetics) idToGroup.set(a.id, a.group ?? 'Other');
+
+  // For each aesthetic we want SBG with that one chip's membership flipped.
+  // Cloning the entire map per aesthetic is wasteful; instead, mutate just
+  // the affected group's set, then restore after counting.
+  for (const a of aesthetics) {
+    const group = idToGroup.get(a.id) ?? 'Other';
+    const wasIn = selected.has(a.id);
+
+    // Mutate baseSbg for just this group.
+    let restoreSet: Set<string> | undefined;
+    let groupAdded = false;
+    let groupRemoved = false;
+    const existing = baseSbg.get(group);
+    if (wasIn) {
+      // Toggling OFF: drop a.id from the group.
+      if (existing) {
+        if (existing.size === 1) {
+          baseSbg.delete(group);
+          restoreSet = existing;
+          groupRemoved = true;
+        } else {
+          existing.delete(a.id);
+        }
+      }
+    } else {
+      // Toggling ON: add a.id to the group (creating set if needed).
+      if (existing) existing.add(a.id);
+      else {
+        baseSbg.set(group, new Set([a.id]));
+        groupAdded = true;
+      }
+    }
+
+    let n = 0;
+    if (baseSbg.size === 0) {
+      n = resolvedCards.length;
+    } else {
+      for (let i = 0; i < resolvedCards.length; i++) {
+        if (cardMatchesIndexed(availSets[i], baseSbg, allByGroup)) n++;
+      }
+    }
+    out.set(a.id, n);
+
+    // Restore baseSbg for the next iteration.
+    if (wasIn) {
+      if (groupRemoved) baseSbg.set(group, restoreSet!);
+      else baseSbg.get(group)!.add(a.id);
+    } else {
+      if (groupAdded) baseSbg.delete(group);
+      else baseSbg.get(group)!.delete(a.id);
+    }
+  }
+  return out;
+}
+
+/** Inner-loop variant of cardMatches that takes pre-built data only. */
+function cardMatchesIndexed(
+  availSet: Set<string>,
+  selectionsByGroupMap: Map<string, Set<string>>,
+  groupAllIdsMap: Map<string, Set<string>>,
+): boolean {
+  for (const [groupName, groupSel] of selectionsByGroupMap) {
+    if (groupSel.size === 0) continue;
+    const groupAll = groupAllIdsMap.get(groupName);
+    if (groupAll) {
+      let anyInGroup = false;
+      for (const id of groupAll) if (availSet.has(id)) { anyInGroup = true; break; }
+      if (!anyInGroup) continue;
+    }
+    let any = false;
+    for (const aid of groupSel) if (availSet.has(aid)) { any = true; break; }
+    if (!any) return false;
+  }
+  return true;
 }
 
 export interface SummaryRow {

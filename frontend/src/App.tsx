@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import {
+  chipToggleCounts,
   filterCards,
   groupAesthetics,
   resolveCardSize,
@@ -107,15 +108,8 @@ export function App() {
   // chips it answers "how many cards will appear if I remove this filter?".
   // Always computed against the resolved deck.
   const chipCounts = useMemo(() => {
-    const m = new Map<string, number>();
-    if (!s.result) return m;
-    for (const a of s.aesthetics) {
-      const next = new Set(s.selectedAesthetics);
-      if (next.has(a.id)) next.delete(a.id);
-      else next.add(a.id);
-      m.set(a.id, filterCards(s.result.per_card, next, s.aesthetics).length);
-    }
-    return m;
+    if (!s.result) return new Map<string, number>();
+    return chipToggleCounts(s.result.per_card, s.selectedAesthetics, s.aesthetics);
   }, [s.result, s.aesthetics, s.selectedAesthetics]);
 
   // Per-aesthetic deck-wide count (ignores current selection) — used only

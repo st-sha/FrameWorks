@@ -63,6 +63,110 @@ _FRAME_VALUES = {"1993", "1997", "2003", "2015", "future"}
 _LANG_PATTERN = {"en", "es", "fr", "de", "it", "pt", "ja", "ko", "ru", "zhs", "zht", "he", "la", "grc", "ar", "sa", "ph"}
 
 
+def _py_sort_key_for(spec: str):
+    """Return a (printing_dict -> sortable) function representing one
+    preference fragment. Lower values sort first.
+
+    Mirrors `_fragment_for` but operates on raw printing dicts in Python so
+    we can rank entirely in-process and skip a per-aesthetic SQL pass."""
+    if ":" in spec:
+        kind, value = spec.split(":", 1)
+    else:
+        kind, value = spec, None
+
+    def boolean(field: str, want: bool):
+        return lambda p, _f=field, _w=want: 0 if bool(p.get(_f)) == _w else 1
+
+    def equals(field: str, want):
+        return lambda p, _f=field, _w=want: 0 if p.get(_f) == _w else 1
+
+    if kind == "first":
+        # Earliest release first. Missing = bottom.
+        return lambda p: (p.get("released_at") is None, p.get("released_at") or "")
+    if kind == "latest":
+        return lambda p: (p.get("released_at") is None, _neg_iso(p.get("released_at")))
+    if kind == "most_valuable":
+        return lambda p: (p.get("price_usd") is None, -(p.get("price_usd") or 0))
+    if kind == "least_valuable":
+        return lambda p: (p.get("price_usd") is None, p.get("price_usd") or 0)
+    if kind == "border" and value in _BORDER_VALUES:
+        return equals("border_color", value)
+    if kind == "frame" and value in _FRAME_VALUES:
+        return equals("frame", value)
+    if kind == "foil":
+        if value == "nonfoil":
+            return boolean("nonfoil", True)
+        if value == "foil":
+            return boolean("foil", True)
+    if kind == "promo":
+        if value == "promo":
+            return boolean("promo", True)
+        if value == "nonpromo":
+            return boolean("promo", False)
+    if kind == "fullart":
+        return boolean("full_art", True)
+    if kind == "nonfullart":
+        return boolean("full_art", False)
+    if kind == "textless":
+        return boolean("textless", True)
+    if kind == "nontextless":
+        return boolean("textless", False)
+    if kind == "paper":
+        return boolean("digital", False)
+    if kind == "digital":
+        return boolean("digital", True)
+    if kind == "lang" and value in _LANG_PATTERN:
+        return equals("lang", value)
+    return None
+
+
+def _neg_iso(s: str | None) -> str:
+    """Return a string that sorts in REVERSE ISO-date order (for "latest")."""
+    if not s:
+        return ""
+    # Negate by character complement on each digit/letter — for ISO strings
+    # of fixed length this gives proper reverse-sort behavior.
+    return "".join(chr(255 - ord(ch)) for ch in s)
+
+
+def _printing_to_example(p: dict) -> dict:
+    """Project a raw printing dict down to the public PerCardExample shape."""
+    return {
+        "set": p["set"],
+        "set_name": p["set_name"],
+        "collector_number": p["collector_number"],
+        "image_normal": p["image_normal"],
+        "image_art_crop": p["image_art_crop"],
+        "price_usd": p["price_usd"],
+        "released_at": p["released_at"],
+        "frame": p["frame"],
+    }
+
+
+def _python_sort_keys(printing_strategy: list[str] | str | None):
+    """Compose a list of sort-key callables matching `_order_clause`.
+
+    The first key always demotes digital printings (paper-first). Then the
+    user's specs in order. Then the tiebreaker: english first, latest first.
+    """
+    if isinstance(printing_strategy, str):
+        printing_strategy = [printing_strategy]
+    keys = [lambda p: 0 if not p.get("digital") else 1]
+    seen = {"paper"}
+    for s in printing_strategy or []:
+        kind = s.split(":", 1)[0]
+        if kind in seen:
+            continue
+        seen.add(kind)
+        k = _py_sort_key_for(s)
+        if k is not None:
+            keys.append(k)
+    # Tiebreakers: english first, then latest release first.
+    keys.append(lambda p: 0 if p.get("lang") == "en" else 1)
+    keys.append(lambda p: (p.get("released_at") is None, _neg_iso(p.get("released_at"))))
+    return keys
+
+
 def _fragment_for(spec: str) -> str | None:
     """Translate one preference spec into a SQL ORDER BY fragment.
 
@@ -178,33 +282,47 @@ def analyze(
 
     # Default printing per oracle_id — chosen by the requested strategy.
     default_printing: dict[str, dict] = {}
-    order_by = _order_clause(printing_strategy)
+    available_by_aesthetic: dict[str, set[str]] = {a.id: set() for a in aesthetics}
+    example_printing: dict[str, dict[str, dict]] = {a.id: {} for a in aesthetics}
+    # Which aesthetics are satisfied by the *default* (chosen-preferred)
+    # printing for each oracle. Subset of available_by_aesthetic. Used by
+    # the Score view to compute the "Preferred-printing" score.
+    default_satisfies: dict[str, set[str]] = {a.id: set() for a in aesthetics}
+    # Map (set, collector_number) -> set of aesthetic ids the printing
+    # satisfies. Drives the frontend's exclude-aware Gallery picker.
+    printing_satisfies: dict[tuple[str, str], set[str]] = {}
+
     if oracle_ids:
-        oracle_placeholders0 = ", ".join(["?"] * len(oracle_ids))
+        # SINGLE bulk fetch of every printing for the deck's oracle_ids.
+        # Pulls every column we need to (a) display, (b) sort by user
+        # preference, and (c) evaluate aesthetic predicates in Python.
+        # This replaces what was previously 1 default-pass query + N
+        # per-aesthetic queries (where N = total aesthetics, currently 41).
+        oracle_placeholders = ", ".join(["?"] * len(oracle_ids))
         with db.read_lock() as c:
-            rows0 = c.execute(
+            all_rows = c.execute(
                 f"""
-                WITH ranked AS (
-                  SELECT oracle_id, "set", set_name, collector_number,
-                         image_normal, image_art_crop, price_usd,
-                         released_at, frame,
-                         ROW_NUMBER() OVER (
-                           PARTITION BY oracle_id
-                           ORDER BY {order_by}
-                         ) AS rn
-                  FROM printings
-                  WHERE oracle_id IN ({oracle_placeholders0})
-                    AND image_normal IS NOT NULL
-                )
                 SELECT oracle_id, "set", set_name, collector_number,
                        image_normal, image_art_crop, price_usd,
-                       released_at, frame
-                FROM ranked WHERE rn = 1
+                       released_at, frame, border_color, frame_effects,
+                       full_art, textless, promo, promo_types, digital,
+                       lang, layout, security_stamp, set_type,
+                       nonfoil, foil
+                FROM printings
+                WHERE oracle_id IN ({oracle_placeholders})
+                  AND image_normal IS NOT NULL
                 """,
                 list(oracle_ids),
             ).fetchall()
-        for oid, set_code, set_name, cn, img, art, price, released, frame in rows0:
-            default_printing[oid] = {
+
+        # Group printings per oracle_id; build a raw dict for each.
+        printings_by_oracle: dict[str, list[dict]] = defaultdict(list)
+        for row in all_rows:
+            (oid, set_code, set_name, cn, img, art, price, released, frame,
+             border, frame_effects, full_art, textless, promo, promo_types,
+             digital, lang, layout, sec_stamp, set_type, nonfoil, foil) = row
+            p = {
+                "oracle_id": oid,
                 "set": set_code,
                 "set_name": set_name,
                 "collector_number": cn,
@@ -213,167 +331,72 @@ def analyze(
                 "price_usd": float(price) if price is not None else None,
                 "released_at": released.isoformat() if released is not None else None,
                 "frame": frame,
+                "border_color": border,
+                "frame_effects": frame_effects,
+                "full_art": full_art,
+                "textless": textless,
+                "promo": promo,
+                "promo_types": promo_types,
+                "digital": digital,
+                "lang": lang,
+                "layout": layout,
+                "security_stamp": sec_stamp,
+                "set_type": set_type,
+                "nonfoil": nonfoil,
+                "foil": foil,
             }
+            printings_by_oracle[oid].append(p)
 
-    # Per-aesthetic: which oracle_ids have at least one matching printing,
-    # plus a representative printing chosen by the requested strategy.
-    available_by_aesthetic: dict[str, set[str]] = {a.id: set() for a in aesthetics}
-    example_printing: dict[str, dict[str, dict]] = {a.id: {} for a in aesthetics}
-    # Which aesthetics are satisfied by the *default* (chosen-preferred)
-    # printing for each oracle. Subset of available_by_aesthetic. Used by
-    # the Score view to compute the "Preferred-printing" score.
-    default_satisfies: dict[str, set[str]] = {a.id: set() for a in aesthetics}
-    # Raw printing rows we encounter during the first pass — keyed by
-    # (set, collector_number) so we can re-evaluate predicates in Python
-    # against every visible printing without a second SQL pass. Each entry
-    # is a dict shaped like rulesets.SCALAR_FIELDS + LIST_FIELDS.
-    raw_printings: dict[tuple[str, str], dict] = {}
+        # Sort each oracle's printings by the user-requested preference
+        # using the equivalent Python sort keys.
+        sort_keys = _python_sort_keys(printing_strategy)
+        def composite(p: dict):
+            return tuple(k(p) for k in sort_keys)
+        for oid, plist in printings_by_oracle.items():
+            plist.sort(key=composite)
 
-    if oracle_ids:
-        oracle_placeholders = ", ".join(["?"] * len(oracle_ids))
-        with db.read_lock() as c:
-            # First, the default-printing pass also fetches the raw fields
-            # we need to evaluate every aesthetic predicate in Python.
-            # We re-run the default query with the extra columns instead of
-            # touching default_printing's existing layout.
-            default_raw_rows = c.execute(
-                f"""
-                WITH ranked AS (
-                  SELECT oracle_id, "set", set_name, collector_number,
-                         border_color, frame, frame_effects, full_art,
-                         textless, promo, promo_types, digital, lang,
-                         layout, security_stamp, set_type,
-                         ROW_NUMBER() OVER (
-                           PARTITION BY oracle_id
-                           ORDER BY {order_by}
-                         ) AS rn
-                  FROM printings
-                  WHERE oracle_id IN ({oracle_placeholders})
-                    AND image_normal IS NOT NULL
-                )
-                SELECT oracle_id, "set", set_name, collector_number,
-                       border_color, frame, frame_effects, full_art,
-                       textless, promo, promo_types, digital, lang,
-                       layout, security_stamp, set_type
-                FROM ranked WHERE rn = 1
-                """,
-                list(oracle_ids),
-            ).fetchall()
-            for row in default_raw_rows:
-                (oid, set_code, _set_name, cn, border, frame, frame_effects,
-                 full_art, textless, promo, promo_types, digital, lang,
-                 layout, sec_stamp, set_type) = row
-                if set_code and cn:
-                    raw_printings[(set_code, cn)] = {
-                        "oracle_id": oid,
-                        "set": set_code,
-                        "collector_number": cn,
-                        "border_color": border,
-                        "frame": frame,
-                        "frame_effects": frame_effects,
-                        "full_art": full_art,
-                        "textless": textless,
-                        "promo": promo,
-                        "promo_types": promo_types,
-                        "digital": digital,
-                        "lang": lang,
-                        "layout": layout,
-                        "security_stamp": sec_stamp,
-                        "set_type": set_type,
-                    }
+        # Evaluate every aesthetic predicate over every printing once.
+        # Total work: cards × printings × aesthetics — but each predicate
+        # is a tiny lambda chain, so this is far faster than 41 SQL probes.
+        for oid, plist in printings_by_oracle.items():
+            for p in plist:
+                key = (p["set"], p["collector_number"])
+                if key in printing_satisfies:
+                    sat = printing_satisfies[key]
+                else:
+                    sat = set()
+                    for ae in aesthetics:
+                        fn = ae.match_py
+                        if fn is not None and fn(p):
+                            sat.add(ae.id)
+                    printing_satisfies[key] = sat
+                # Track availability + best example per aesthetic. plist is
+                # already sorted by preference, so the first matching entry
+                # we see for each (oid, aesthetic) wins.
+                for aid in sat:
+                    if oid not in example_printing[aid]:
+                        example_printing[aid][oid] = _printing_to_example(p)
+                        available_by_aesthetic[aid].add(oid)
 
-            for ae in aesthetics:
-                sql = f"""
-                    WITH ranked AS (
-                      SELECT oracle_id, "set", set_name, collector_number,
-                             image_normal, image_art_crop, price_usd,
-                             released_at, frame,
-                             border_color, frame_effects, full_art,
-                             textless, promo, promo_types, digital, lang,
-                             layout, security_stamp, set_type,
-                             ROW_NUMBER() OVER (
-                               PARTITION BY oracle_id
-                               ORDER BY {order_by}
-                             ) AS rn
-                      FROM printings
-                      WHERE oracle_id IN ({oracle_placeholders})
-                        AND ({ae.sql_where})
-                    )
-                    SELECT oracle_id, "set", set_name, collector_number,
-                           image_normal, image_art_crop, price_usd,
-                           released_at, frame,
-                           border_color, frame_effects, full_art,
-                           textless, promo, promo_types, digital, lang,
-                           layout, security_stamp, set_type
-                    FROM ranked WHERE rn = 1
-                """
-                params = list(oracle_ids) + list(ae.params)
-                rows = c.execute(sql, params).fetchall()
-                for row in rows:
-                    (oid, set_code, set_name, cn, img, art, price, released,
-                     frame, border, frame_effects, full_art, textless, promo,
-                     promo_types, digital, lang, layout, sec_stamp,
-                     set_type) = row
-                    available_by_aesthetic[ae.id].add(oid)
-                    example_printing[ae.id][oid] = {
-                        "set": set_code,
-                        "set_name": set_name,
-                        "collector_number": cn,
-                        "image_normal": img,
-                        "image_art_crop": art,
-                        "price_usd": float(price) if price is not None else None,
-                        "released_at": released.isoformat() if released is not None else None,
-                        "frame": frame,
-                    }
-                    if set_code and cn:
-                        raw_printings.setdefault((set_code, cn), {
-                            "oracle_id": oid,
-                            "set": set_code,
-                            "collector_number": cn,
-                            "border_color": border,
-                            "frame": frame,
-                            "frame_effects": frame_effects,
-                            "full_art": full_art,
-                            "textless": textless,
-                            "promo": promo,
-                            "promo_types": promo_types,
-                            "digital": digital,
-                            "lang": lang,
-                            "layout": layout,
-                            "security_stamp": sec_stamp,
-                            "set_type": set_type,
-                        })
-
-        # Second pass entirely in Python: evaluate every aesthetic's
-        # compiled predicate against every raw printing we've collected.
-        # This replaces what used to be N additional SQL probes (one per
-        # aesthetic) and brings analyze() back from ~5s to sub-second on
-        # small decks.
-        printing_satisfies: dict[tuple[str, str], set[str]] = {}
-        for key, raw in raw_printings.items():
-            sat: set[str] = set()
-            for ae in aesthetics:
-                fn = ae.match_py
-                if fn is not None and fn(raw):
-                    sat.add(ae.id)
-            printing_satisfies[key] = sat
-        # Build default_satisfies from the printing_satisfies map.
-        for oid, dp in default_printing.items():
-            key = (dp.get("set"), dp.get("collector_number"))
-            for aid in printing_satisfies.get(key, ()):
+        # Default printing = top-ranked printing per oracle (regardless of
+        # aesthetic). Match the legacy SQL behaviour exactly.
+        for oid, plist in printings_by_oracle.items():
+            if not plist:
+                continue
+            top = plist[0]
+            default_printing[oid] = _printing_to_example(top)
+            for aid in printing_satisfies.get((top["set"], top["collector_number"]), ()):
                 default_satisfies[aid].add(oid)
 
         # Attach `satisfies: list[str]` to every default and example dict so
         # the frontend can pick a next-best printing under spotlight excludes.
         for oid, dp in default_printing.items():
             key = (dp.get("set"), dp.get("collector_number"))
-            sat = sorted(printing_satisfies.get(key, set()))
-            dp["satisfies"] = sat
+            dp["satisfies"] = sorted(printing_satisfies.get(key, set()))
         for ae_id, by_oid in example_printing.items():
             for oid, ex in by_oid.items():
                 key = (ex.get("set"), ex.get("collector_number"))
-                sat = sorted(printing_satisfies.get(key, set()))
-                ex["satisfies"] = sat
+                ex["satisfies"] = sorted(printing_satisfies.get(key, set()))
 
     total_unique = len(qty_by_norm)
     total_qty = sum(qty_by_norm.values())

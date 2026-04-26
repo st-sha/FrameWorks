@@ -239,9 +239,11 @@ aesthetics:
   # ---- Origin / Universe -------------------------------------------------
   - id: universes_within
     label: "Universes Within"
-    description: "Magic in-universe printing — the literal complement of Universes Beyond."
+    description: "Magic in-universe printing — the literal complement of Universes Beyond (Scryfall `-is:ub`)."
     group: "Origin"
     match:
+      # Literal `not` of universes_beyond's predicate. Keep these two lists
+      # identical — if you add a UB signal below, mirror it above.
       not:
         any:
           - contains: { promo_types: "universesbeyond" }
@@ -258,9 +260,10 @@ aesthetics:
 
   - id: universes_beyond
     label: "Universes Beyond"
-    description: "Crossover printings (LOTR, Doctor Who, 40K, Final Fantasy, etc.)."
+    description: "Crossover printings (LOTR, Doctor Who, 40K, Final Fantasy, etc.) — Scryfall `is:ub`."
     group: "Origin"
     match:
+      # Mirror of universes_within's `not` predicate.
       any:
         - contains: { promo_types: "universesbeyond" }
         - contains: { promo_types: "sourcematerial" }

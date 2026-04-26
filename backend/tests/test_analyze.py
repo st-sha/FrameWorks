@@ -29,7 +29,8 @@ def fresh_db(tmp_path: Path):
             lang VARCHAR, layout VARCHAR,
             image_normal VARCHAR, image_art_crop VARCHAR,
             price_usd DOUBLE,
-            security_stamp VARCHAR, set_type VARCHAR
+            security_stamp VARCHAR, set_type VARCHAR,
+            nonfoil BOOLEAN, foil BOOLEAN
         );
         """
     )
@@ -61,7 +62,7 @@ def fresh_db(tmp_path: Path):
     ]
     c.executemany(
         """INSERT INTO printings VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, true, false
         )""",
         rows,
     )
@@ -129,7 +130,8 @@ def test_borderless_predicate_matches_inverted_borderless_printing():
             DATE '2022-02-18', '2015', ['legendary', 'inverted'],
             'borderless', false, false, false, [], false, 'en', 'normal',
             'img-bos.png', 'art-bos.png', 50.0,
-            NULL, NULL
+            NULL, NULL,
+            true, false
         );"""
     )
     c.execute(
