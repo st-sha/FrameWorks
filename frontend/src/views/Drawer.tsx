@@ -60,7 +60,6 @@ export function Drawer() {
                   qty={c.qty}
                   printing={c.default}
                   unavailable
-                  missingLabel="Not in this aesthetic"
                   showName
                 />
               ))}

@@ -18,9 +18,34 @@
   --card-radius: 4.75% / 3.5%;
   --row-h: 36px;
 
+  /* Aesthetic-group accent palette. Single source of truth for the
+   * per-group color used by side-filter panels, the spotlight bar,
+   * insight views, and any chip / row that needs to pick up a color
+   * from its group. To recolor, change here and every .g-* selector
+   * below picks it up automatically. */
+  --gc-frame:    #c8b078; /* muted gold */
+  --gc-border:   #88a4c2; /* muted blue */
+  --gc-treat:    #b693c9; /* muted violet */
+  --gc-showcase: #9966b8; /* deeper violet */
+  --gc-promo:    #cc8a80; /* muted coral */
+  --gc-origin:   #8fb877; /* muted green */
+  --gc-other:    #8a8e93; /* grey */
+
   font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
 }
+
+/* Universal `--gc` mapping: anywhere a `.g-*` class appears (panel, chip,
+ * row, spotlight group, insight cell), `--gc` resolves to the right
+ * palette token. Specific selectors below can still override but should
+ * generally not need to. */
+.g-frame    { --gc: var(--gc-frame); }
+.g-border   { --gc: var(--gc-border); }
+.g-treat    { --gc: var(--gc-treat); }
+.g-showcase { --gc: var(--gc-showcase); }
+.g-promo    { --gc: var(--gc-promo); }
+.g-origin   { --gc: var(--gc-origin); }
+.g-other    { --gc: var(--gc-other); }
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
@@ -154,14 +179,7 @@ h2 {
   letter-spacing: 0.5px;
 }
 
-/* Per-group accent colors (used via the --gc CSS var on .group-panel) */
-/* Per-group accent colors — desaturated to keep the UI calm */
-.group-panel.g-frame    { --gc: #c8b078; } /* muted gold */
-.group-panel.g-border   { --gc: #88a4c2; } /* muted blue */
-.group-panel.g-treat    { --gc: #b693c9; } /* muted violet */
-.group-panel.g-promo    { --gc: #cc8a80; } /* muted coral */
-.group-panel.g-origin   { --gc: #8fb877; } /* muted green */
-.group-panel.g-other    { --gc: #8a8e93; } /* grey */
+/* Per-group accents inherited from the .g-* mapping at the top of the file. */
 
 .muted { color: var(--muted); font-size: 12px; }
 .warn { color: var(--accent); font-size: 12px; }
@@ -1116,12 +1134,8 @@ a.cov-mark:hover { background: var(--accent); }
 /* === Six-part UI polish: drop indicator, spotlight, art-grid thumb, coverage interactive === */
 
 /* Generic group-color tokens (also usable outside .group-panel). */
-.g-frame  { --gc: #c8b078; }
-.g-border { --gc: #88a4c2; }
-.g-treat  { --gc: #b693c9; }
-.g-promo  { --gc: #cc8a80; }
-.g-origin { --gc: #8fb877; }
-.g-other  { --gc: #8a8e93; }
+/* (Per-group `--gc` colors are defined once at the top of this file via
+ * the universal `.g-*` mapping. No per-context duplication needed.) */
 
 /* ---- Printing prefs: drop-line indicator while dragging ---- */
 .pref-list { position: relative; }
@@ -2058,8 +2072,7 @@ a.cov-mark:hover { background: var(--accent); }
 /* === Phase 6 additions === */
 
 /* Showcase Treatment color (distinct from Treatment lavender) */
-.group-panel.g-showcase { --gc: #9966b8; }
-.cs-gb-row.g-showcase, .cs-top3 li.g-showcase, .funnel-row.g-showcase, .compare-col.g-showcase, .rec-row.g-showcase, .ot-sub.g-showcase, .chip.g-showcase, .group-panel.g-showcase { --gc: #9966b8; }
+/* g-showcase color is defined once at the top of the file. */
 
 /* Score view: row of three numerics */
 .cs-scores {
@@ -2247,14 +2260,7 @@ a.cov-mark:hover { background: var(--accent); }
   }
 }
 
-/* Coloring the spotlight group accents using same g-* vars */
-.spotlight-group.g-frame    { --gc: #c8b078; }
-.spotlight-group.g-border   { --gc: #88a4c2; }
-.spotlight-group.g-treat    { --gc: #b693c9; }
-.spotlight-group.g-showcase { --gc: #9966b8; }
-.spotlight-group.g-promo    { --gc: #cc8a80; }
-.spotlight-group.g-origin   { --gc: #8fb877; }
-.spotlight-group.g-other    { --gc: #8a8e93; }
+/* spotlight-group inherits per-group `--gc` from the universal mapping. */
 
 /* Shared dim treatment used by Mosaic / Art Grid / Timeline / Coverage */
 .spotlight-dim { opacity: 0.6; filter: saturate(0.7); transition: opacity 120ms, filter 120ms; }

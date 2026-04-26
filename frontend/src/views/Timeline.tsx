@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { filterCards, matchesSpotlight, useStore } from '../store';
+import { filterCards, useSpotlightMatcher, useStore } from '../store';
 import { frameEra, ymd } from './insightsUtil';
 import { PageDescription } from './PageDescription';
 
@@ -17,7 +17,7 @@ export function TimelineView() {
   const aesthetics = useStore((s) => s.aesthetics);
   const selected = useStore((s) => s.selectedAesthetics);
   const spotlight = useStore((s) => s.galleryAesthetics);
-  const spotExcluded = useStore((s) => s.gallerySpotExcluded);
+  const { hasSpot, match: spotMatch } = useSpotlightMatcher();
 
   const cards = useMemo(
     () => filterCards(result.per_card, selected, aesthetics),
@@ -27,7 +27,6 @@ export function TimelineView() {
 
   // Build entries with usable release dates.
   const entries = useMemo(() => {
-    const hasSpot = spotlight.length > 0 || spotExcluded.length > 0;
     const out: Array<{
       key: string;
       name: string;
@@ -47,8 +46,7 @@ export function TimelineView() {
       if (!p?.released_at) continue;
       const d = new Date(p.released_at);
       if (Number.isNaN(d.getTime())) continue;
-      const matches =
-        !hasSpot || matchesSpotlight(c.available_aesthetics, spotlight, spotExcluded, c.default_aesthetics ?? null);
+      const matches = !hasSpot || spotMatch(c);
       out.push({
         key: c.name_normalized,
         name: c.name,
@@ -66,7 +64,8 @@ export function TimelineView() {
     }
     out.sort((a, b) => a.day - b.day);
     return out;
-  }, [cards, primaryId, spotlight, spotExcluded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, primaryId, spotlight, hasSpot]);
 
   if (entries.length === 0) {
     return (

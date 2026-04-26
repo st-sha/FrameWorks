@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PerCardExample, PerCardRow, PrintingDetail } from '../api';
 import { api } from '../api';
-import { filterCards, useStore } from '../store';
+import { filterCards, useAestheticIndex, useStore } from '../store';
 import { MtgCard } from './MtgCard';
 
 export function GalleryView() {
@@ -32,11 +32,7 @@ export function GalleryView() {
   // is rendered as the main Gallery card.
   const primaryId = galleryAesthetics[0] ?? null;
   const focusAes = aesthetics.find((a) => a.id === primaryId) ?? null;
-  const idToAes = useMemo(() => {
-    const m = new Map<string, (typeof aesthetics)[number]>();
-    for (const a of aesthetics) m.set(a.id, a);
-    return m;
-  }, [aesthetics]);
+  const idToAes = useAestheticIndex();
 
   const [hover, setHover] = useState<HoverState | null>(null);
   /** When non-null, the popover is pinned to this card and ignores hover
@@ -156,7 +152,6 @@ export function GalleryView() {
           let printing: PerCardExample | null | undefined =
             focusAes ? c.examples[focusAes.id] : c.default;
           let unavailable = focusAes != null && !c.available_aesthetics.includes(focusAes.id);
-          let noPrintingAvoidsExcludes = false;
 
           // Step 3 — exclude-aware fallback. Build a candidate pool from
           // the default + every example printing, dedup by (set, cn).
@@ -184,9 +179,9 @@ export function GalleryView() {
               printing = candidates[0].p;
               unavailable = false;
             } else {
-              // Nothing satisfies. Leave default in place but mark it as
-              // unavailable so the missing-label overlay shows.
-              noPrintingAvoidsExcludes = true;
+              // Nothing satisfies. Both this case and the focus-aesthetic
+              // unavailable case render via the SAME `unavailable` flag so
+              // the dim treatment + missing-label overlay are identical.
               unavailable = true;
             }
           }
@@ -203,8 +198,7 @@ export function GalleryView() {
               key={c.name_normalized}
               className={
                 'gallery-card-wrap' +
-                (pinned?.name_normalized === c.name_normalized ? ' pinned' : '') +
-                (noPrintingAvoidsExcludes ? ' spotlight-dim' : '')
+                (pinned?.name_normalized === c.name_normalized ? ' pinned' : '')
               }
               onMouseEnter={(e) => openHover(c, { x: e.clientX, y: e.clientY })}
               onMouseMove={(e) => {
@@ -231,13 +225,6 @@ export function GalleryView() {
                 printing={shown}
                 unavailable={unavailable}
                 unresolved={!c.resolved}
-                missingLabel={
-                  noPrintingAvoidsExcludes
-                    ? 'No printing matches'
-                    : unavailable
-                      ? 'Not in this aesthetic'
-                      : undefined
-                }
                 showName={false}
                 disableHover
               />

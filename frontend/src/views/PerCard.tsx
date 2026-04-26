@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { Aesthetic, PerCardExample, PerCardRow } from '../api';
-import { filterCards, groupAesthetics, matchesSpotlight, useStore } from '../store';
+import { filterCards, groupAesthetics, useSpotlightMatcher, useStore } from '../store';
 import { groupClass } from './insightsUtil';
 
 /**
@@ -22,8 +22,7 @@ export function PerCardView() {
   const result = useStore((s) => s.result)!;
   const aesthetics = useStore((s) => s.aesthetics);
   const selected = useStore((s) => s.selectedAesthetics);
-  const spotlight = useStore((s) => s.galleryAesthetics);
-  const spotExcluded = useStore((s) => s.gallerySpotExcluded);
+  const { match: spotMatch } = useSpotlightMatcher();
   const density = useStore((s) => s.coverageDensity);
   const openDrawer = useStore((s) => s.openDrawer);
 
@@ -231,12 +230,7 @@ export function PerCardView() {
         </thead>
         <tbody>
           {sorted.map((c) => {
-            const matched = matchesSpotlight(
-              c.available_aesthetics,
-              spotlight,
-              spotExcluded,
-              c.default_aesthetics ?? null,
-            );
+            const matched = spotMatch(c);
             return (
               <Row
                 key={c.name_normalized}

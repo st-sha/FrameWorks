@@ -67,57 +67,10 @@ def _py_sort_key_for(spec: str):
     """Return a (printing_dict -> sortable) function representing one
     preference fragment. Lower values sort first.
 
-    Mirrors `_fragment_for` but operates on raw printing dicts in Python so
-    we can rank entirely in-process and skip a per-aesthetic SQL pass."""
-    if ":" in spec:
-        kind, value = spec.split(":", 1)
-    else:
-        kind, value = spec, None
-
-    def boolean(field: str, want: bool):
-        return lambda p, _f=field, _w=want: 0 if bool(p.get(_f)) == _w else 1
-
-    def equals(field: str, want):
-        return lambda p, _f=field, _w=want: 0 if p.get(_f) == _w else 1
-
-    if kind == "first":
-        # Earliest release first. Missing = bottom.
-        return lambda p: (p.get("released_at") is None, p.get("released_at") or "")
-    if kind == "latest":
-        return lambda p: (p.get("released_at") is None, _neg_iso(p.get("released_at")))
-    if kind == "most_valuable":
-        return lambda p: (p.get("price_usd") is None, -(p.get("price_usd") or 0))
-    if kind == "least_valuable":
-        return lambda p: (p.get("price_usd") is None, p.get("price_usd") or 0)
-    if kind == "border" and value in _BORDER_VALUES:
-        return equals("border_color", value)
-    if kind == "frame" and value in _FRAME_VALUES:
-        return equals("frame", value)
-    if kind == "foil":
-        if value == "nonfoil":
-            return boolean("nonfoil", True)
-        if value == "foil":
-            return boolean("foil", True)
-    if kind == "promo":
-        if value == "promo":
-            return boolean("promo", True)
-        if value == "nonpromo":
-            return boolean("promo", False)
-    if kind == "fullart":
-        return boolean("full_art", True)
-    if kind == "nonfullart":
-        return boolean("full_art", False)
-    if kind == "textless":
-        return boolean("textless", True)
-    if kind == "nontextless":
-        return boolean("textless", False)
-    if kind == "paper":
-        return boolean("digital", False)
-    if kind == "digital":
-        return boolean("digital", True)
-    if kind == "lang" and value in _LANG_PATTERN:
-        return equals("lang", value)
-    return None
+    Pulls from the unified `_SPEC_TABLE` so SQL and Python rankings stay
+    in lockstep — a single bug fix to a spec lands in both query paths."""
+    handler = _resolve_spec(spec)
+    return handler[1] if handler else None
 
 
 def _neg_iso(s: str | None) -> str:
@@ -127,6 +80,73 @@ def _neg_iso(s: str | None) -> str:
     # Negate by character complement on each digit/letter — for ISO strings
     # of fixed length this gives proper reverse-sort behavior.
     return "".join(chr(255 - ord(ch)) for ch in s)
+
+
+def _bool_pykey(field: str, want: bool):
+    return lambda p, _f=field, _w=want: 0 if bool(p.get(_f)) == _w else 1
+
+
+def _eq_pykey(field: str, want):
+    return lambda p, _f=field, _w=want: 0 if p.get(_f) == _w else 1
+
+
+# Single source of truth for every preference spec. Each entry maps a
+# `(kind, value-or-None)` to (sql_fragment, python_sort_key). Both the
+# SQL ORDER-BY builder and the Python sort-key builder consult this table
+# so they can never diverge again — the user already hit a real bug
+# where one accepted multi-spec stacking and the other deduped.
+def _build_spec_table() -> "dict[tuple[str, str | None], tuple[str, object]]":
+    table: dict[tuple[str, str | None], tuple[str, object]] = {}
+
+    def add(kind: str, value: str | None, sql: str, py):
+        table[(kind, value)] = (sql, py)
+
+    add("first", None, "released_at ASC NULLS LAST",
+        lambda p: (p.get("released_at") is None, p.get("released_at") or ""))
+    add("latest", None, "released_at DESC NULLS LAST",
+        lambda p: (p.get("released_at") is None, _neg_iso(p.get("released_at"))))
+    add("most_valuable", None, "price_usd DESC NULLS LAST",
+        lambda p: (p.get("price_usd") is None, -(p.get("price_usd") or 0)))
+    add("least_valuable", None, "price_usd ASC NULLS LAST",
+        lambda p: (p.get("price_usd") is None, p.get("price_usd") or 0))
+    for v in _BORDER_VALUES:
+        add("border", v, f"(border_color = '{v}') DESC", _eq_pykey("border_color", v))
+    for v in _FRAME_VALUES:
+        add("frame", v, f"(frame = '{v}') DESC", _eq_pykey("frame", v))
+    add("foil", "nonfoil", "(nonfoil = true) DESC", _bool_pykey("nonfoil", True))
+    add("foil", "foil", "(foil = true) DESC", _bool_pykey("foil", True))
+    add("promo", "promo", "(promo = true) DESC", _bool_pykey("promo", True))
+    add("promo", "nonpromo", "(promo = false) DESC", _bool_pykey("promo", False))
+    add("fullart", None, "(full_art = true) DESC", _bool_pykey("full_art", True))
+    add("nonfullart", None, "(full_art = false) DESC", _bool_pykey("full_art", False))
+    add("textless", None, "(textless = true) DESC", _bool_pykey("textless", True))
+    add("nontextless", None, "(textless = false) DESC", _bool_pykey("textless", False))
+    add("paper", None, "(digital = false) DESC", _bool_pykey("digital", False))
+    add("digital", None, "(digital = true) DESC", _bool_pykey("digital", True))
+    for v in _LANG_PATTERN:
+        add("lang", v, f"(lang = '{v}') DESC", _eq_pykey("lang", v))
+    return table
+
+
+_SPEC_TABLE = _build_spec_table()
+_LEGACY_ALIASES = {
+    "prefer_black_border": "border:black",
+    "prefer_white_border": "border:white",
+    "prefer_silver_border": "border:silver",
+    "prefer_gold_border": "border:gold",
+    "prefer_borderless": "border:borderless",
+}
+
+
+def _resolve_spec(spec: str):
+    """Look up a preference spec in _SPEC_TABLE, applying legacy aliases."""
+    if spec in _LEGACY_ALIASES:
+        spec = _LEGACY_ALIASES[spec]
+    if ":" in spec:
+        kind, value = spec.split(":", 1)
+    else:
+        kind, value = spec, None
+    return _SPEC_TABLE.get((kind, value))
 
 
 def _printing_to_example(p: dict) -> dict:
@@ -180,62 +200,11 @@ def _python_sort_keys(printing_strategy: list[str] | str | None):
 def _fragment_for(spec: str) -> str | None:
     """Translate one preference spec into a SQL ORDER BY fragment.
 
-    Returns None for unrecognized specs (silently dropped so frontend
-    extension never crashes the analysis).
+    Pulls from the unified `_SPEC_TABLE`. Returns None for unrecognized
+    specs (silently dropped so frontend extensions never crash analysis).
     """
-    if ":" in spec:
-        kind, value = spec.split(":", 1)
-    else:
-        kind, value = spec, None
-
-    if kind == "first":
-        return "released_at ASC NULLS LAST"
-    if kind == "latest":
-        return "released_at DESC NULLS LAST"
-    if kind == "most_valuable":
-        return "price_usd DESC NULLS LAST"
-    if kind == "least_valuable":
-        return "price_usd ASC NULLS LAST"
-    if kind == "border" and value in _BORDER_VALUES:
-        return f"(border_color = '{value}') DESC"
-    if kind == "frame" and value in _FRAME_VALUES:
-        return f"(frame = '{value}') DESC"
-    if kind == "foil":
-        if value == "nonfoil":
-            return "(nonfoil = true) DESC"
-        if value == "foil":
-            return "(foil = true) DESC"
-    if kind == "promo":
-        if value == "promo":
-            return "(promo = true) DESC"
-        if value == "nonpromo":
-            return "(promo = false) DESC"
-    if kind == "fullart":
-        return "(full_art = true) DESC"
-    if kind == "nonfullart":
-        return "(full_art = false) DESC"
-    if kind == "textless":
-        return "(textless = true) DESC"
-    if kind == "nontextless":
-        return "(textless = false) DESC"
-    if kind == "paper":
-        return "(digital = false) DESC"
-    if kind == "digital":
-        return "(digital = true) DESC"
-    if kind == "lang" and value in _LANG_PATTERN:
-        return f"(lang = '{value}') DESC"
-
-    # Legacy aliases (kept so existing preference IDs keep working).
-    legacy = {
-        "prefer_black_border": "border:black",
-        "prefer_white_border": "border:white",
-        "prefer_silver_border": "border:silver",
-        "prefer_gold_border": "border:gold",
-        "prefer_borderless": "border:borderless",
-    }
-    if spec in legacy:
-        return _fragment_for(legacy[spec])
-    return None
+    handler = _resolve_spec(spec)
+    return handler[0] if handler else None
 
 
 def _order_clause(strategies: list[str] | str | None) -> str:
@@ -298,8 +267,10 @@ def analyze(
     # printing for each oracle. Subset of available_by_aesthetic. Used by
     # the Score view to compute the "Preferred-printing" score.
     default_satisfies: dict[str, set[str]] = {a.id: set() for a in aesthetics}
-    # Map (set, collector_number) -> set of aesthetic ids the printing
-    # satisfies. Drives the frontend's exclude-aware Gallery picker.
+    # Per-printing predicate cache, scoped to this analyze() call. The
+    # global cross-request cache below kicks in for repeat printings the
+    # backend has already evaluated; this local dict short-circuits within
+    # the same request when one printing is the example for many aesthetics.
     printing_satisfies: dict[tuple[str, str], set[str]] = {}
 
     if oracle_ids:
@@ -368,25 +339,37 @@ def analyze(
         # Evaluate every aesthetic predicate over every printing once.
         # Total work: cards × printings × aesthetics — but each predicate
         # is a tiny lambda chain, so this is far faster than 41 SQL probes.
+        # Early-exit per oracle: once we've found an example for every
+        # aesthetic, we can stop walking that oracle's lower-ranked
+        # printings entirely.
+        n_aesthetics = len(aesthetics)
+        ver = _AESTHETICS_VERSION
         for oid, plist in printings_by_oracle.items():
+            covered_for_oid: set[str] = set()
             for p in plist:
                 key = (p["set"], p["collector_number"])
-                if key in printing_satisfies:
-                    sat = printing_satisfies[key]
-                else:
-                    sat = set()
-                    for ae in aesthetics:
-                        fn = ae.match_py
-                        if fn is not None and fn(p):
-                            sat.add(ae.id)
+                sat = printing_satisfies.get(key)
+                if sat is None:
+                    cache_key2 = (key[0], key[1], ver)
+                    sat = _PRINTING_SATISFIES_CACHE.get(cache_key2)
+                    if sat is None:
+                        sat = set()
+                        for ae in aesthetics:
+                            fn = ae.match_py
+                            if fn is not None and fn(p):
+                                sat.add(ae.id)
+                        _PRINTING_SATISFIES_CACHE[cache_key2] = sat
                     printing_satisfies[key] = sat
                 # Track availability + best example per aesthetic. plist is
                 # already sorted by preference, so the first matching entry
                 # we see for each (oid, aesthetic) wins.
                 for aid in sat:
-                    if oid not in example_printing[aid]:
+                    if aid not in covered_for_oid:
                         example_printing[aid][oid] = _printing_to_example(p)
                         available_by_aesthetic[aid].add(oid)
+                        covered_for_oid.add(aid)
+                if len(covered_for_oid) >= n_aesthetics:
+                    break
 
         # Default printing = top-ranked printing per oracle (regardless of
         # aesthetic). Match the legacy SQL behaviour exactly.
@@ -499,6 +482,22 @@ def _cached_analyze_internal(key: str, payload_repr: str) -> dict:  # pragma: no
 
 _RESULT_CACHE: dict[str, dict] = {}
 
+# Cross-request cache for "which aesthetics does this printing satisfy?".
+# Keyed by (set, collector_number, aesthetics-version-token). The token is
+# included so that a ruleset reload safely invalidates the cache.
+# Survives across analyze() calls so back-to-back imports of similar
+# decks (commander variants, sideboard tweaks, etc.) share work.
+_PRINTING_SATISFIES_CACHE: dict[tuple[str, str, int], set[str]] = {}
+_AESTHETICS_VERSION = 0
+
+
+def bump_aesthetics_version() -> None:
+    """Invalidate the printing-satisfies cross-request cache. Call when
+    rulesets are reloaded or replaced."""
+    global _AESTHETICS_VERSION
+    _AESTHETICS_VERSION += 1
+    _PRINTING_SATISFIES_CACHE.clear()
+
 
 def analyze_cached(
     entries: list[DecklistEntry],
@@ -526,3 +525,8 @@ def analyze_cached(
 
 def clear_cache() -> None:
     _RESULT_CACHE.clear()
+    # The printing-satisfies cache is keyed by aesthetics version, so we
+    # don't need to clear it on every analyze() invalidation — but we do
+    # need to clear it on a Scryfall data refresh because the same
+    # (set, cn) may now refer to different printing data.
+    _PRINTING_SATISFIES_CACHE.clear()

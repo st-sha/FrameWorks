@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { filterCards, useStore } from '../store';
+import { filterCards, useAestheticIndex, useStore } from '../store';
 import { groupClass, visibleAesthetics } from './insightsUtil';
 import { PageDescription } from './PageDescription';
 
@@ -22,11 +22,7 @@ export function CompareView() {
     [result.per_card, selected, aesthetics],
   );
   const visible = useMemo(() => visibleAesthetics(aesthetics, 'compare'), [aesthetics]);
-  const aesById = useMemo(() => {
-    const m = new Map<string, (typeof aesthetics)[number]>();
-    for (const a of aesthetics) m.set(a.id, a);
-    return m;
-  }, [aesthetics]);
+  const aesById = useAestheticIndex();
 
   // Default to Black Border vs White Border when both exist; fall back to
   // top-2-by-coverage otherwise. Persisted, so user picks survive.

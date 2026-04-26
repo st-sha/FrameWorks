@@ -1,13 +1,12 @@
 import { useMemo } from 'react';
 import type { PerCardExample } from '../api';
-import { matchesSpotlight, useStore } from '../store';
+import { useSpotlightMatcher, useStore } from '../store';
 
 export function ArtGridView() {
   const result = useStore((s) => s.result)!;
   const aesthetics = useStore((s) => s.aesthetics);
   const selected = useStore((s) => s.selectedAesthetics);
-  const spotlight = useStore((s) => s.galleryAesthetics);
-  const spotExcluded = useStore((s) => s.gallerySpotExcluded);
+  const { hasSpot: hasSpotlight, match: spotMatch } = useSpotlightMatcher();
 
   // Art Grid is a coverage matrix: every (resolved) card row is always shown.
   // Sidebar filters only narrow the COLUMNS that are visible; they never
@@ -23,7 +22,8 @@ export function ArtGridView() {
     return scope.filter((a) => rows.some((c) => c.examples[a.id]?.image_normal));
   }, [aesthetics, selected, rows]);
 
-  const hasSpotlight = spotlight.length > 0 || spotExcluded.length > 0;
+  const hasSpotlight_unused = false; void hasSpotlight_unused;
+  // (`hasSpotlight` and `spotMatch` are now provided by useSpotlightMatcher above.)
 
   // Match a row's "default" printing against an aesthetic's example, so we
   // can flag the preferred cell for subtle highlighting.
@@ -52,9 +52,7 @@ export function ArtGridView() {
         ))}
 
         {rows.map((c) => {
-          const matchesSpot =
-            !hasSpotlight ||
-            matchesSpotlight(c.available_aesthetics, spotlight, spotExcluded, c.default_aesthetics ?? null);
+          const matchesSpot = !hasSpotlight || spotMatch(c);
           return (
             <RowGroup
               key={c.name_normalized}

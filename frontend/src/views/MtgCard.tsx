@@ -1,6 +1,11 @@
 import { useState } from 'react';
 import type { PerCardExample } from '../api';
 
+/** Single canonical message for any "this card slot can't be filled" case.
+ *  Centralized so the dim treatment + copy stay identical across views
+ *  (Gallery, Drawer, future Compare). */
+export const NO_PRINTING_MESSAGE = 'No printing matches filters';
+
 interface Props {
   name: string;
   qty?: number;
@@ -63,8 +68,8 @@ export function MtgCard({
       {/* Missing label sits as a SIBLING of .mtg-card (not a child) so the
           card's grayscale+brightness filter doesn't drag the label down
           with it. Positioned absolutely over the card via .card-cell. */}
-      {unavailable && missingLabel && (
-        <div className="missing-overlay">{missingLabel}</div>
+      {unavailable && (
+        <div className="missing-overlay">{missingLabel ?? NO_PRINTING_MESSAGE}</div>
       )}
       {showName && (
         <div className={'card-name ' + (unresolved ? 'unresolved' : '')}>

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { filterCards, matchesSpotlight, useStore } from '../store';
+import { filterCards, useAestheticIndex, useSpotlightMatcher, useStore } from '../store';
 import { groupClass } from './insightsUtil';
 import { PageDescription } from './PageDescription';
 
@@ -15,8 +15,7 @@ export function MosaicView() {
   const result = useStore((s) => s.result)!;
   const aesthetics = useStore((s) => s.aesthetics);
   const selected = useStore((s) => s.selectedAesthetics);
-  const spotlight = useStore((s) => s.galleryAesthetics);
-  const spotExcluded = useStore((s) => s.gallerySpotExcluded);
+  const { spotlight, spotExcluded, hasSpot, match: matchFn } = useSpotlightMatcher();
   const openDrawer = useStore((s) => s.openDrawer);
 
   const cards = useMemo(
@@ -24,38 +23,21 @@ export function MosaicView() {
     [result.per_card, selected, aesthetics],
   );
 
-  // The matcher: combines spotlight include/exclude. When neither is set,
-  // falls back to the side-filter selection. When nothing at all is set,
-  // every card matches.
-  const hasSpot = spotlight.length > 0 || spotExcluded.length > 0;
-  const matchFn = (c: (typeof cards)[number]) => {
-    if (hasSpot) {
-      return matchesSpotlight(
-        c.available_aesthetics,
-        spotlight,
-        spotExcluded,
-        c.default_aesthetics ?? null,
-      );
-    }
-    if (selected.size > 0) {
-      for (const id of c.available_aesthetics) if (selected.has(id)) return true;
-      return false;
-    }
-    return true;
-  };
+  // The matcher (`matchFn`) is provided by useSpotlightMatcher; combines
+  // include / exclude / side-filter precedence in one place.
 
-  const aesById = useMemo(() => {
-    const m = new Map<string, (typeof aesthetics)[number]>();
-    for (const a of aesthetics) m.set(a.id, a);
-    return m;
-  }, [aesthetics]);
+  const aesById = useAestheticIndex();
 
   // Sort: matches first, then by quantity desc, then alpha. Stable.
+  // Precompute matchFn(c) once per card so the comparator is O(n log n)
+  // comparisons on memoized booleans instead of O(n log n) matchFn calls.
   const sorted = useMemo(() => {
+    const matched = new Map<string, boolean>();
+    for (const c of cards) matched.set(c.name_normalized, matchFn(c));
     const arr = [...cards];
     arr.sort((a, b) => {
-      const aMatch = matchFn(a);
-      const bMatch = matchFn(b);
+      const aMatch = matched.get(a.name_normalized) ?? true;
+      const bMatch = matched.get(b.name_normalized) ?? true;
       if (aMatch !== bMatch) return aMatch ? -1 : 1;
       if (b.qty !== a.qty) return b.qty - a.qty;
       return a.name.localeCompare(b.name);

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import { useMemo } from 'react';
 import type { Aesthetic, AnalyzeResponse, HealthResponse, PerCardRow, PrintingStrategy } from './api';
 
 export type ViewMode =
@@ -392,6 +393,58 @@ export function viewSupportsSpotlight(view: ViewMode): boolean {
     view === 'timeline' ||
     view === 'percard'
   );
+}
+
+/**
+ * Subscribes to spotlight + side-filter slices and returns a stable
+ * matcher function. Centralizes the "does this card match the current
+ * spotlight, falling back to side-filter, falling back to true" logic so
+ * Mosaic / Art Grid / Timeline / Coverage / Gallery don't each duplicate
+ * it (and accidentally drift in subtle ways).
+ *
+ * The returned `match(card)` returns true when the card should be shown
+ * at full saturation, false when it should be dimmed.
+ */
+export function useSpotlightMatcher(): {
+  spotlight: string[];
+  spotExcluded: string[];
+  hasSpot: boolean;
+  match: (card: PerCardRow) => boolean;
+} {
+  const spotlight = useStore((s) => s.galleryAesthetics);
+  const spotExcluded = useStore((s) => s.gallerySpotExcluded);
+  const selected = useStore((s) => s.selectedAesthetics);
+  const hasSpot = spotlight.length > 0 || spotExcluded.length > 0;
+  const match = (c: PerCardRow): boolean => {
+    if (hasSpot) {
+      return matchesSpotlight(
+        c.available_aesthetics,
+        spotlight,
+        spotExcluded,
+        c.default_aesthetics ?? null,
+      );
+    }
+    if (selected.size > 0) {
+      for (const id of c.available_aesthetics) if (selected.has(id)) return true;
+      return false;
+    }
+    return true;
+  };
+  return { spotlight, spotExcluded, hasSpot, match };
+}
+
+/**
+ * Subscribes to `aesthetics` and returns a stable `Map<id, Aesthetic>`
+ * lookup. Eliminates the same `aesById = useMemo(() => ...)` boilerplate
+ * across Compare / Mosaic / Outliers / Gallery.
+ */
+export function useAestheticIndex(): Map<string, Aesthetic> {
+  const aesthetics = useStore((s) => s.aesthetics);
+  return useMemo(() => {
+    const m = new Map<string, Aesthetic>();
+    for (const a of aesthetics) m.set(a.id, a);
+    return m;
+  }, [aesthetics]);
 }
 
 /** Group aesthetic ids by their group string.

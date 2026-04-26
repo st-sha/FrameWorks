@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { filterCards, useStore } from '../store';
+import { filterCards, useAestheticIndex, useStore } from '../store';
 import { aestheticCoverage, groupClass, moneyShort, visibleAesthetics } from './insightsUtil';
 import { PageDescription, priceFor } from './PageDescription';
 
@@ -23,11 +23,7 @@ export function OutliersView() {
   );
   const visible = useMemo(() => visibleAesthetics(aesthetics, 'outliers'), [aesthetics]);
   const cov = useMemo(() => aestheticCoverage(cards, visible), [cards, visible]);
-  const aesById = useMemo(() => {
-    const m = new Map<string, (typeof aesthetics)[number]>();
-    for (const a of aesthetics) m.set(a.id, a);
-    return m;
-  }, [aesthetics]);
+  const aesById = useAestheticIndex();
 
   const defaultTarget = useMemo(() => {
     if (spotlight[0] && aesById.has(spotlight[0])) return spotlight[0];
