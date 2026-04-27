@@ -32,7 +32,6 @@ export function TimelineView() {
       name: string;
       qty: number;
       img: string | null;
-      imgNormal: string | null;
       released: string;
       year: number;
       day: number; // days since 1970-01-01
@@ -52,7 +51,6 @@ export function TimelineView() {
         name: c.name,
         qty: c.qty,
         img: p.image_art_crop ?? p.image_normal ?? null,
-        imgNormal: p.image_normal ?? p.image_art_crop ?? null,
         released: ymd(p.released_at),
         year: d.getUTCFullYear(),
         day: Math.floor(d.getTime() / (24 * 3600 * 1000)),
@@ -188,7 +186,7 @@ export function TimelineView() {
           {placed.map((e) => (
             <a
               key={e.key + '-' + e.released}
-              className={'tl-tile hover-preview' + (e.dim ? ' spotlight-dim' : '')}
+              className={'tl-tile' + (e.dim ? ' spotlight-dim' : '')}
               href={
                 e.set && e.cn
                   ? `https://scryfall.com/card/${encodeURIComponent(e.set)}/${encodeURIComponent(e.cn)}`
@@ -211,11 +209,6 @@ export function TimelineView() {
                 <div className="tl-tile-empty">{e.name.slice(0, 2)}</div>
               )}
               {e.qty > 1 && <span className="tl-qty">{e.qty}</span>}
-              {e.imgNormal && (
-                <span className="hover-preview-card tl-hover-preview" aria-hidden>
-                  <img src={e.imgNormal} alt="" loading="lazy" />
-                </span>
-              )}
             </a>
           ))}
         </div>

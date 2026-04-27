@@ -14,6 +14,7 @@ from .config import Settings
 log = logging.getLogger(__name__)
 
 BULK_INDEX_URL = "https://api.scryfall.com/bulk-data"
+SETS_INDEX_URL = "https://api.scryfall.com/sets"
 
 
 class ScryfallClient:
@@ -34,6 +35,16 @@ class ScryfallClient:
             if entry.get("type") == self.bulk_type:
                 return entry
         raise RuntimeError(f"Scryfall bulk type {self.bulk_type!r} not found in index")
+
+    def get_sets(self) -> list[dict]:
+        """Fetch the full /sets index. Used to populate set_code->icon_svg_uri
+        so the UI can render the proper symbol for sets whose code differs
+        from their svg filename (e.g. h2r -> mh2.svg)."""
+        with httpx.Client(headers=self._headers, timeout=30) as client:
+            r = client.get(SETS_INDEX_URL)
+            r.raise_for_status()
+            data = r.json()
+        return data.get("data", []) or []
 
     def download(self, url: str, dest: Path) -> None:
         tmp = dest.with_suffix(dest.suffix + ".tmp")
@@ -94,7 +105,36 @@ def _ingest_into_temp(c: duckdb.DuckDBPyConnection, json_path: Path) -> None:
             COALESCE(nonfoil, false) AS nonfoil,
             COALESCE(foil, false) AS foil,
             security_stamp,
-            set_type
+            set_type,
+            -- A printing is tournament-legal iff BOTH:
+            --   (a) the card's NAME is legal/restricted in some standard
+            --       format per Scryfall's `legalities` map (oracle-level
+            --       — every reprint of Lightning Bolt qualifies even from
+            --       gold-border WC sets), AND
+            --   (b) THIS specific printing is on a tournament-acceptable
+            --       substrate: not silver/gold border, not 30A reproduction,
+            --       not memorabilia set_type, not an acorn-stamped Unfinity
+            --       card.
+            -- Both halves are needed: (a) alone marks gold-border WC reprints
+            -- as legal because the underlying card name is legal in Vintage;
+            -- (b) alone marks Embiggen as illegal because Unfinity is
+            -- set_type='funny', even though the printing is Vintage-legal.
+            ((
+                legalities.standard  IN ('legal','restricted')
+             OR legalities.pioneer   IN ('legal','restricted')
+             OR legalities.modern    IN ('legal','restricted')
+             OR legalities.legacy    IN ('legal','restricted')
+             OR legalities.vintage   IN ('legal','restricted')
+             OR legalities.commander IN ('legal','restricted')
+             OR legalities.pauper    IN ('legal','restricted')
+             OR legalities.duel      IN ('legal','restricted')
+             OR legalities.brawl     IN ('legal','restricted')
+             OR legalities.oathbreaker IN ('legal','restricted')
+            )
+            AND COALESCE(border_color, '') NOT IN ('silver', 'gold')
+            AND COALESCE(set_type, '') != 'memorabilia'
+            AND COALESCE(security_stamp, '') != 'acorn'
+            AND "set" NOT IN ('30a', '30c')) AS tournament_legal
         FROM read_json_auto(
             '{json_path.as_posix()}',
             format='array',
@@ -155,9 +195,41 @@ def refresh(settings: Settings, force: bool = False) -> dict:
 
     with db.write_lock() as c:
         _ingest_into_temp(c, cache)
+        # Also fetch + ingest the /sets index so the UI can resolve each
+        # printing's set code to the correct Scryfall icon SVG (some sets
+        # like h2r reuse mh2's icon, etc.).
+        try:
+            sets_data = client.get_sets()
+            _ingest_sets(c, sets_data)
+        except Exception as e:  # pragma: no cover
+            log.warning("Failed to refresh /sets index: %s", e)
 
     db.set_meta("scryfall_updated_at", upstream_updated)
     db.set_meta("scryfall_bulk_type", settings.scryfall_bulk_type)
     db.set_meta("scryfall_download_uri", entry["download_uri"])
     log.info("Scryfall ingest complete (updated_at=%s)", upstream_updated)
     return {"status": "refreshed", "data_version": upstream_updated}
+
+
+def _ingest_sets(c: duckdb.DuckDBPyConnection, sets: list[dict]) -> None:
+    """Replace the `sets` table with `(code, name, icon_svg_uri)` rows."""
+    c.execute("DROP TABLE IF EXISTS sets;")
+    c.execute(
+        """
+        CREATE TABLE sets (
+            code VARCHAR PRIMARY KEY,
+            name VARCHAR,
+            icon_svg_uri VARCHAR
+        );
+        """
+    )
+    rows = [
+        (s.get("code"), s.get("name"), s.get("icon_svg_uri"))
+        for s in sets
+        if s.get("code")
+    ]
+    if rows:
+        c.executemany(
+            "INSERT INTO sets (code, name, icon_svg_uri) VALUES (?, ?, ?);",
+            rows,
+        )

@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>Frameworks</Name>
-  <Repository>deckaesthetics:latest</Repository>
-  <Registry/>
+  <Repository>ghcr.io/st-sha/frameworks:latest</Repository>
+  <Registry>https://github.com/st-sha/FrameWorks/pkgs/container/frameworks</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>sh</Shell>

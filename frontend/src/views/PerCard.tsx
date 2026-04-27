@@ -303,7 +303,7 @@ function Row({
   groupBoundaries: Set<number>;
   coverage: number;
   maxCoverage: number;
-  onPickAesthetic: (id: string) => void;
+  onPickAesthetic: (id: string, card: { oracle_id: string | null; name: string }) => void;
   dim?: boolean;
 }) {
   const [hover, setHover] = useState<{ x: number; y: number; img: string } | null>(null);
@@ -362,6 +362,7 @@ function Row({
         {cols.map((a, i) => {
           const present = has.has(a.id);
           const ex = card.examples[a.id];
+          const versionCount = card.version_counts?.[a.id] ?? 0;
           return (
             <td
               key={a.id}
@@ -373,7 +374,7 @@ function Row({
               }
               title={
                 present
-                  ? `${a.label} — ${ex?.set?.toUpperCase() ?? ''} ${ex?.collector_number ?? ''}\nClick: open aesthetic · Ctrl-click: open on Scryfall`
+                  ? `${a.label} — ${versionCount} version${versionCount === 1 ? '' : 's'} available\n${ex?.set?.toUpperCase() ?? ''} ${ex?.collector_number ?? ''}\nClick: open aesthetic · Ctrl-click: open on Scryfall`
                   : `${a.label} — not available`
               }
               onMouseMove={(e) => {
@@ -382,17 +383,26 @@ function Row({
               }}
               onMouseLeave={() => setHover(null)}
               onClick={(e) => {
-                if (!present) return;
-                if (e.ctrlKey || e.metaKey) {
-                  const url = scryfallUrlForExample(card.name, ex);
-                  window.open(url, '_blank', 'noopener,noreferrer');
-                  return;
-                }
-                onPickAesthetic(a.id);
-              }}
+                  if (!present) return;
+                  if (e.ctrlKey || e.metaKey) {
+                    const url = scryfallUrlForExample(card.name, ex);
+                    window.open(url, '_blank', 'noopener,noreferrer');
+                    return;
+                  }
+                  onPickAesthetic(a.id, { oracle_id: card.oracle_id, name: card.name });
+                }}
               role={present ? 'button' : undefined}
             >
-              <span className="cov-mark" aria-hidden />
+              {present ? (
+                <span className="cov-block">
+                  <span className="cov-mark" aria-hidden />
+                  {versionCount > 0 && (
+                    <span className="cov-count">{versionCount}</span>
+                  )}
+                </span>
+              ) : (
+                <span className="cov-mark" aria-hidden />
+              )}
             </td>
           );
         })}

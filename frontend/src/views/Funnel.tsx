@@ -32,7 +32,7 @@ export function FunnelView() {
 
   const groups = useMemo(() => groupAesthetics(aesthetics), [aesthetics]);
 
-  const [sort, setSort] = useState<'pct' | 'group' | 'name'>('pct');
+  const [sort, setSort] = useState<'pct' | 'group' | 'name'>('group');
 
   const sortedRows = useMemo(() => {
     const rows = [...cov];
@@ -42,15 +42,23 @@ export function FunnelView() {
       (a.id === 'paper_only' ? 1 : 0) - (b.id === 'paper_only' ? 1 : 0);
     const alpha = (a: typeof cov[number], b: typeof cov[number]) =>
       a.label.localeCompare(b.label);
+    // Canonical group order (matches sidebar): Frame Era, Border, Treatment,
+    // Showcase Treatment, Origin, Other. Anything outside the canonical
+    // list falls to the bottom in encounter order.
+    const groupOrder = new Map<string, number>();
+    let i = 0;
+    for (const g of groups.keys()) groupOrder.set(g, i++);
+    const groupRank = (a: typeof cov[number]) =>
+      groupOrder.get(a.group) ?? Number.MAX_SAFE_INTEGER;
     rows.sort((a, b) => {
       let primary = 0;
       if (sort === 'pct') primary = b.pct - a.pct;
       else if (sort === 'name') primary = a.label.localeCompare(b.label);
-      else primary = a.group.localeCompare(b.group) || b.pct - a.pct;
+      else primary = groupRank(a) - groupRank(b) || b.pct - a.pct;
       return primary || paperLast(a, b) || alpha(a, b);
     });
     return rows;
-  }, [cov, sort]);
+  }, [cov, sort, groups]);
 
   return (
     <div className="insight-wrap funnel-wrap">

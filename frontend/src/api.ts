@@ -43,6 +43,11 @@ export interface PerCardExample {
    *  avoids any spotlight-excluded aesthetics. May be missing on older
    *  backends. */
   satisfies?: string[];
+  /** False iff this printing is from a non-tournament-legal source
+   *  (gold/silver border, funny / memorabilia set_type, 30A). The
+   *  frontend overlays a red "Not tournament legal" banner on these.
+   *  Optional for backwards compatibility. */
+  is_tournament_legal?: boolean;
 }
 
 export interface PerCardRow {
@@ -56,6 +61,10 @@ export interface PerCardRow {
   /** Aesthetics whose predicate is satisfied by the chosen `default` printing.
    *  Subset of available_aesthetics. May be missing on older backends. */
   default_aesthetics?: string[];
+  /** Per-aesthetic count of distinct printings of this card that satisfy
+   *  that aesthetic. Used by the Coverage view to show "N versions" per
+   *  cell. May be missing on older backends. */
+  version_counts?: Record<string, number>;
   examples: Record<string, PerCardExample>;
   default: PerCardExample | null;
 }
@@ -112,15 +121,32 @@ export interface PrintingsResponse {
   printings: PrintingDetail[];
 }
 
+export interface SetInfo {
+  code: string;
+  name: string;
+  set_type: string | null;
+  released_at: string | null;
+  printing_count: number;
+  unique_card_count: number;
+  icon: string | null;
+  is_tournament_legal: boolean;
+  is_digital: boolean;
+}
+
 export const api = {
   health: () => jfetch<HealthResponse>('/api/health'),
   aesthetics: () => jfetch<{ aesthetics: Aesthetic[] }>('/api/aesthetics'),
   importers: () => jfetch<{ importers: { name: string; hosts: string[] }[] }>('/api/importers'),
+  sets: () => jfetch<{ sets: Record<string, string> }>('/api/sets'),
+  setsList: () => jfetch<{ sets: SetInfo[] }>('/api/sets/list'),
   analyze: (body: {
     decklist: { text?: string; url?: string };
     aesthetic_ids?: string[];
     include_sideboard: boolean;
     include_basics: boolean;
+    allow_non_tournament?: boolean;
+    allow_digital?: boolean;
+    disabled_sets?: string[];
     printing_strategy?: PrintingStrategy;
   }) =>
     jfetch<AnalyzeResponse>('/api/analyze', {
@@ -132,6 +158,9 @@ export const api = {
     name?: string;
     aesthetic_id?: string;
     printing_strategy?: PrintingStrategy;
+    allow_non_tournament?: boolean;
+    allow_digital?: boolean;
+    disabled_sets?: string[];
     limit?: number;
   }) =>
     jfetch<PrintingsResponse>('/api/printings', {

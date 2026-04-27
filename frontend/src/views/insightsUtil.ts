@@ -42,7 +42,6 @@ export function groupClass(group: string | null | undefined): string {
  * because filtering by paper-only is sometimes useful.
  */
 export const HIDDEN_AESTHETICS_PER_VIEW: Record<string, Set<string>> = {
-  consistency: new Set(['paper_only']),
   funnel: new Set(['paper_only']),
   outliers: new Set(['paper_only']),
   compare: new Set(['paper_only']),

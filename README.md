@@ -32,11 +32,17 @@ UI shows progress and starts working as soon as ingestion completes.
 
 ## Quick start (Unraid)
 
-1. Build the image somewhere with `docker buildx` and push to your private registry,
-   **or** drop the repo on your server and run `docker compose up -d --build`.
-2. In Unraid: **Docker → Add Container → Template URL** → point at the XML in
-   `unraid/deckaesthetics.xml` (or paste its contents into a new template).
-3. Default volume mapping: `/mnt/user/appdata/deckaesthetics → /data`.
+Prebuilt images are published to GHCR on every push to `main` and on version tags:
+
+```bash
+docker pull ghcr.io/st-sha/frameworks:latest
+```
+
+1. In Unraid: **Docker → Add Container → Template URL** → point at the XML in
+   `unraid/deckaesthetics.xml` (or paste its contents into a new template). The
+   template already references `ghcr.io/st-sha/frameworks:latest`.
+2. Default volume mapping: `/mnt/user/appdata/deckaesthetics → /data`.
+3. The image is public, so no registry credentials are required.
 
 ## Environment variables
 

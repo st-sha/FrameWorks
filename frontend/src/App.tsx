@@ -12,13 +12,12 @@ import { groupClass } from './views/insightsUtil';
 import { GalleryView } from './views/Gallery';
 import { PerCardView } from './views/PerCard';
 import { ArtGridView } from './views/ArtGrid';
-import { ConsistencyView } from './views/Consistency';
-import { MosaicView } from './views/Mosaic';
 import { FunnelView } from './views/Funnel';
 import { OutliersView } from './views/Outliers';
 import { TimelineView } from './views/Timeline';
 import { CompareView } from './views/Compare';
 import { Drawer } from './views/Drawer';
+import { SettingsModal } from './views/SettingsModal';
 import type { ViewMode } from './store';
 
 const SAMPLE = `4 Lightning Bolt
@@ -34,12 +33,14 @@ export function App() {
   const s = useStore();
   const [importerHosts, setImporterHosts] = useState<string[]>([]);
   const [importExpanded, setImportExpanded] = useState<boolean>(true);
+  const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     api.aesthetics().then((r) => s.setAesthetics(r.aesthetics)).catch((e) => s.setError(String(e)));
     api.health().then(s.setHealth).catch(() => {});
     api.importers().then((r) => setImporterHosts(r.importers.flatMap((i) => i.hosts))).catch(() => {});
+    api.sets().then((r) => s.setSetIcons(r.sets)).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -70,6 +71,9 @@ export function App() {
           : { text: s.decklistText },
         include_sideboard: s.includeSideboard,
         include_basics: s.includeBasics,
+        allow_non_tournament: s.allowNonTournament,
+        allow_digital: s.allowDigital,
+        disabled_sets: s.disabledSets,
         printing_strategy: s.printingStrategy,
       });
       s.setResult(result);
@@ -97,7 +101,7 @@ export function App() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.decklistText, s.decklistUrl, s.includeSideboard, s.includeBasics, s.printingStrategy, s.health?.data_version]);
+  }, [s.decklistText, s.decklistUrl, s.includeSideboard, s.includeBasics, s.allowNonTournament, s.allowDigital, s.disabledSets, s.printingStrategy, s.health?.data_version]);
 
   const groups = useMemo(() => groupAesthetics(s.aesthetics), [s.aesthetics]);
 
@@ -195,6 +199,22 @@ export function App() {
                 />
                 Include basic lands
               </label>
+              <label className="row" title="Excludes gold-border WC reprints, silver-border un-sets, 30A, memorabilia products.">
+                <input
+                  type="checkbox"
+                  checked={s.allowNonTournament}
+                  onChange={(e) => s.setAllowNonTournament(e.target.checked)}
+                />
+                Allow non-tournament-legal
+              </label>
+              <button
+                type="button"
+                className="linklike"
+                style={{ fontSize: 11, marginTop: 2, alignSelf: 'flex-start' }}
+                onClick={() => setSettingsOpen(true)}
+              >
+                ⚙ Per-set settings{s.disabledSets.length > 0 && ` · ${s.disabledSets.length} disabled`}
+              </button>
             </div>
           </section>
         ) : (
@@ -240,6 +260,23 @@ export function App() {
                 />
                 Basic lands
               </label>
+              <label className="row" title="Excludes gold-border WC reprints, silver-border un-sets, 30A, memorabilia products.">
+                <input
+                  type="checkbox"
+                  checked={s.allowNonTournament}
+                  onChange={(e) => s.setAllowNonTournament(e.target.checked)}
+                />
+                Tournament+
+              </label>
+              <button
+                type="button"
+                className="linklike"
+                style={{ fontSize: 11 }}
+                onClick={() => setSettingsOpen(true)}
+                title="Per-set settings"
+              >
+                ⚙{s.disabledSets.length > 0 && ` · ${s.disabledSets.length}`}
+              </button>
             </div>
           </section>
         )}
@@ -373,7 +410,7 @@ export function App() {
         <div className="toolbar tabbar">
           <ViewTabs view={s.view} setView={s.setView} />
           <span className="spacer" />
-          {(s.view === 'gallery' || s.view === 'art' || s.view === 'percard' || s.view === 'mosaic') && s.view !== 'percard' && (
+          {(s.view === 'gallery' || s.view === 'art' || s.view === 'percard') && s.view !== 'percard' && (
             <label className="size-slider" title="Card image size (saved per page)">
               <span aria-hidden>▫</span>
               <input
@@ -451,18 +488,17 @@ export function App() {
           </details>
         ) : null}
 
-        {s.result && s.view === 'consistency' && <ConsistencyView />}
-        {s.result && s.view === 'mosaic' && <MosaicView />}
+        {s.result && s.view === 'art' && <ArtGridView />}
         {s.result && s.view === 'funnel' && <FunnelView />}
         {s.result && s.view === 'outliers' && <OutliersView />}
         {s.result && s.view === 'timeline' && <TimelineView />}
         {s.result && s.view === 'compare' && <CompareView />}
         {s.result && s.view === 'gallery' && <GalleryView />}
         {s.result && s.view === 'percard' && <PerCardView />}
-        {s.result && s.view === 'art' && <ArtGridView />}
       </main>
 
       <Drawer />
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
@@ -1070,22 +1106,20 @@ const TAB_GROUPS: ReadonlyArray<{
   tabs: ReadonlyArray<{ id: ViewMode; label: string; title?: string }>;
 }> = [
   {
+    group: 'Tables',
+    tabs: [
+      { id: 'gallery', label: 'Gallery', title: 'Each card as a single image' },
+      { id: 'art', label: 'Art Grid', title: 'Card × aesthetic art table' },
+      { id: 'percard', label: 'Coverage', title: 'Card × aesthetic table' },
+    ],
+  },
+  {
     group: 'Insights',
     tabs: [
-      { id: 'consistency', label: 'Score', title: 'How cohesive is this deck?' },
-      { id: 'mosaic', label: 'Mosaic', title: 'Wall-of-art view of the deck' },
       { id: 'funnel', label: 'Funnel', title: 'Coverage shape per aesthetic' },
       { id: 'outliers', label: 'Blockers', title: 'Cards blocking a chosen aesthetic' },
       { id: 'compare', label: 'Compare', title: 'Two aesthetics side-by-side' },
       { id: 'timeline', label: 'Timeline', title: 'Cards placed by printing release date' },
-    ],
-  },
-  {
-    group: 'Tables',
-    tabs: [
-      { id: 'percard', label: 'Coverage', title: 'Card × aesthetic table' },
-      { id: 'gallery', label: 'Gallery', title: 'Each card as a single image' },
-      { id: 'art', label: 'Art Grid', title: 'Card × aesthetic art table' },
     ],
   },
 ];

@@ -97,7 +97,8 @@ def _ensure_schema(c: duckdb.DuckDBPyConnection) -> None:
             nonfoil BOOLEAN,
             foil BOOLEAN,
             security_stamp VARCHAR,
-            set_type VARCHAR
+            set_type VARCHAR,
+            tournament_legal BOOLEAN
         );
         """
     )

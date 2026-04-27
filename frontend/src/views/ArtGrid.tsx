@@ -1,11 +1,14 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { PerCardExample } from '../api';
 import { useSpotlightMatcher, useStore } from '../store';
+import { groupClass } from './insightsUtil';
 
 export function ArtGridView() {
   const result = useStore((s) => s.result)!;
   const aesthetics = useStore((s) => s.aesthetics);
   const selected = useStore((s) => s.selectedAesthetics);
+  const highlightPreferred = useStore((s) => s.artGridPreferredHighlight);
+  const setHighlightPreferred = useStore((s) => s.setArtGridPreferredHighlight);
   const { hasSpot: hasSpotlight, match: spotMatch } = useSpotlightMatcher();
 
   // Art Grid is a coverage matrix: every (resolved) card row is always shown.
@@ -22,85 +25,149 @@ export function ArtGridView() {
     return scope.filter((a) => rows.some((c) => c.examples[a.id]?.image_normal));
   }, [aesthetics, selected, rows]);
 
-  const hasSpotlight_unused = false; void hasSpotlight_unused;
-  // (`hasSpotlight` and `spotMatch` are now provided by useSpotlightMatcher above.)
-
   // Match a row's "default" printing against an aesthetic's example, so we
-  // can flag the preferred cell for subtle highlighting.
+  // can flag the preferred cell for subtle highlighting (when enabled).
   const isPreferred = (def: PerCardExample | null | undefined, ex: PerCardExample | undefined) =>
     !!def && !!ex && def.set === ex.set && def.collector_number === ex.collector_number;
 
-  return (
-    <div className="art-grid-wrap">
-      <div
-        className="art-grid"
-        style={{
-          gridTemplateColumns: `minmax(220px, max-content) var(--card-size, 168px) repeat(${cols.length}, var(--card-size, 168px))`,
-        }}
-      >
-        {/* Header row */}
-        <div className="art-grid-header sticky-left">Card</div>
-        <div className="art-grid-header sticky-left-2 preferred-col-header" title="The user's preferred printing">
-          <div className="hdr-label">Preferred</div>
-          <div className="hdr-group">your default</div>
-        </div>
-        {cols.map((a) => (
-          <div key={a.id} className="art-grid-header" title={a.description || a.label}>
-            <div className="hdr-label">{a.label}</div>
-            {a.group && <div className="hdr-group">{a.group}</div>}
-          </div>
-        ))}
+  // Top horizontal scrollbar: a thin div pinned above the grid wrapper that
+  // forwards its scroll position to the wrapper and vice versa. Useful on
+  // wide tables — saves a trip to the bottom of the page just to scroll.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const syncing = useRef(false);
+  useEffect(() => {
+    const sync = () => {
+      const w = wrapRef.current;
+      const top = topScrollRef.current;
+      if (!w || !top) return;
+      const inner = w.querySelector<HTMLDivElement>('.art-grid');
+      const phantom = top.querySelector<HTMLDivElement>('.art-grid-top-scroll-phantom');
+      if (!inner || !phantom) return;
+      phantom.style.width = inner.scrollWidth + 'px';
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    if (wrapRef.current) ro.observe(wrapRef.current);
+    const inner = wrapRef.current?.querySelector('.art-grid');
+    if (inner) ro.observe(inner);
+    return () => ro.disconnect();
+  }, [cols.length, rows.length]);
+  const onTopScroll = () => {
+    if (syncing.current) return;
+    syncing.current = true;
+    if (wrapRef.current && topScrollRef.current) {
+      wrapRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+    }
+    syncing.current = false;
+  };
+  const onWrapScroll = () => {
+    if (syncing.current) return;
+    syncing.current = true;
+    if (wrapRef.current && topScrollRef.current) {
+      topScrollRef.current.scrollLeft = wrapRef.current.scrollLeft;
+    }
+    syncing.current = false;
+  };
 
-        {rows.map((c) => {
-          const matchesSpot = !hasSpotlight || spotMatch(c);
-          return (
-            <RowGroup
-              key={c.name_normalized}
-              name={c.name}
-              qty={c.qty}
-              setCode={c.default?.set?.toUpperCase() ?? null}
-              preferred={c.default}
-              dim={!matchesSpot}
-            >
-              {/* Preferred column always renders the default printing
-                  full-size, with the same affordances as a normal cell so
-                  the user can compare it directly against the alternates. */}
-              <ArtCell
-                key="__preferred__"
-                name={c.name}
-                printing={c.default ?? undefined}
-                dim={!matchesSpot}
-                preferred
-                sticky
-              />
-              {cols.map((a) => {
-                const ex = c.examples[a.id];
-                return (
-                  <ArtCell
-                    key={a.id}
-                    name={c.name}
-                    printing={ex}
-                    dim={!matchesSpot}
-                    preferred={isPreferred(c.default, ex)}
-                  />
-                );
-              })}
-            </RowGroup>
-          );
-        })}
+  return (
+    <>
+      <div className="art-grid-toolbar">
+        <label className="art-grid-toggle">
+          <input
+            type="checkbox"
+            checked={highlightPreferred}
+            onChange={(e) => setHighlightPreferred(e.target.checked)}
+          />
+          Highlight preferred printing
+        </label>
       </div>
-      {!rows.length && (
-        <div className="empty-state">
-          <h3>No cards in this deck</h3>
+      <div
+        className="art-grid-top-scroll"
+        ref={topScrollRef}
+        onScroll={onTopScroll}
+        aria-hidden
+      >
+        <div className="art-grid-top-scroll-phantom" />
+      </div>
+      <div className="art-grid-wrap" ref={wrapRef} onScroll={onWrapScroll}>
+        <div
+          className="art-grid"
+          style={{
+            gridTemplateColumns: `minmax(220px, max-content) var(--card-size, 168px) repeat(${cols.length}, var(--card-size, 168px))`,
+          }}
+        >
+          {/* Header row */}
+          <div className="art-grid-header sticky-left">Card</div>
+          <div className="art-grid-header sticky-left-2 preferred-col-header" title="The user's preferred printing">
+            <div className="hdr-label">Preferred</div>
+            <div className="hdr-group">your default</div>
+          </div>
+          {cols.map((a) => (
+            <div
+              key={a.id}
+              className={'art-grid-header ' + groupClass(a.group)}
+              title={a.description || a.label}
+            >
+              <div className="hdr-label">{a.label}</div>
+              {a.group && <div className="hdr-group">{a.group}</div>}
+            </div>
+          ))}
+
+          {rows.map((c) => {
+            const matchesSpot = !hasSpotlight || spotMatch(c);
+            return (
+              <RowGroup
+                key={c.name_normalized}
+                name={c.name}
+                qty={c.qty}
+                setCode={c.default?.set?.toUpperCase() ?? null}
+                preferred={c.default}
+                dim={!matchesSpot}
+              >
+                {/* Preferred column always renders the default printing
+                    full-size, with the same affordances as a normal cell so
+                    the user can compare it directly against the alternates. */}
+                <ArtCell
+                  key="__preferred__"
+                  name={c.name}
+                  printing={c.default ?? undefined}
+                  dim={!matchesSpot}
+                  /* The dedicated Preferred column is its own column — it
+                   * shouldn't ALSO get the per-cell preferred outline. */
+                  preferred={false}
+                  sticky
+                />
+                {cols.map((a) => {
+                  const ex = c.examples[a.id];
+                  return (
+                    <ArtCell
+                      key={a.id}
+                      name={c.name}
+                      printing={ex}
+                      dim={!matchesSpot}
+                      preferred={highlightPreferred && isPreferred(c.default, ex)}
+                      groupCls={groupClass(a.group)}
+                    />
+                  );
+                })}
+              </RowGroup>
+            );
+          })}
         </div>
-      )}
-      {rows.length > 0 && cols.length === 0 && (
-        <div className="empty-state">
-          <h3>No printings match the selected aesthetic columns</h3>
-          <div>Try clearing some sidebar filters.</div>
-        </div>
-      )}
-    </div>
+        {!rows.length && (
+          <div className="empty-state">
+            <h3>No cards in this deck</h3>
+          </div>
+        )}
+        {rows.length > 0 && cols.length === 0 && (
+          <div className="empty-state">
+            <h3>No printings match the selected aesthetic columns</h3>
+            <div>Try clearing some sidebar filters.</div>
+          </div>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -161,9 +228,9 @@ function RowGroup({
   );
 }
 
-function ArtCell({ name, printing, dim, preferred, sticky }: { name: string; printing: PerCardExample | undefined; dim?: boolean; preferred?: boolean; sticky?: boolean }) {
+function ArtCell({ name, printing, dim, preferred, sticky, groupCls }: { name: string; printing: PerCardExample | undefined; dim?: boolean; preferred?: boolean; sticky?: boolean; groupCls?: string }) {
   if (!printing?.image_normal) {
-    return <div className={'art-cell empty' + (dim ? ' spotlight-dim' : '') + (sticky ? ' sticky-left-2' : '')}>·</div>;
+    return <div className={'art-cell empty' + (dim ? ' spotlight-dim' : '') + (sticky ? ' sticky-left-2' : '') + (groupCls ? ' ' + groupCls : '')}>·</div>;
   }
   const scryUrl = `https://scryfall.com/card/${encodeURIComponent(printing.set ?? '')}/${encodeURIComponent(printing.collector_number ?? '')}`;
   const tcgUrl = tcgplayerSearchUrl(name, printing.set);
@@ -175,7 +242,8 @@ function ArtCell({ name, printing, dim, preferred, sticky }: { name: string; pri
     'art-cell' +
     (dim ? ' spotlight-dim' : '') +
     (preferred ? ' preferred' : '') +
-    (sticky ? ' sticky-left-2' : '');
+    (sticky ? ' sticky-left-2' : '') +
+    (groupCls ? ' ' + groupCls : '');
   return (
     <div className={cls} title={preferred ? `${name} — preferred printing` : undefined}>
       <a

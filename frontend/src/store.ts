@@ -7,8 +7,6 @@ export type ViewMode =
   | 'gallery'
   | 'percard'
   | 'art'
-  | 'consistency'
-  | 'mosaic'
   | 'funnel'
   | 'outliers'
   | 'timeline'
@@ -31,6 +29,17 @@ interface State {
   gallerySpotExcluded: string[];
   includeSideboard: boolean;
   includeBasics: boolean;
+  /** When false, exclude printings from non-tournament-legal sources
+   *  (gold-border WC, silver-border / acorn un-sets, 30A, etc.).
+   *  Default true preserves the legacy "show everything" behavior. */
+  allowNonTournament: boolean;
+  /** When false (default), exclude digital-only printings (MTGA, MTGO,
+   *  Alchemy). Most users care about physical cards so this is opt-in
+   *  via the Settings page. */
+  allowDigital: boolean;
+  /** Per-set kill switch (set codes). Listed sets are dropped from the
+   *  printing pool entirely — finer control than `allowNonTournament`. */
+  disabledSets: string[];
   printingStrategy: PrintingStrategy;
   view: ViewMode;
   /** Card image size in pixels (longest controllable axis: card width).
@@ -41,10 +50,25 @@ interface State {
    *  view is shown, then persisted. */
   cardSizeByView: Partial<Record<ViewMode, number>>;
   drawerAestheticId: string | null;
+  /** When the drawer was opened from a per-card cell, the oracle_id and
+   *  display name of that card. Lets the drawer show a focused
+   *  "all printings of THIS card matching the aesthetic" section in
+   *  addition to the global card list. Both null when opened from a
+   *  generic header / chip. */
+  drawerCardOracleId: string | null;
+  drawerCardName: string | null;
   /** Two aesthetic ids selected for the Compare view. */
   compareAesthetics: [string | null, string | null];
   /** Coverage table density: compact / default / comfortable. */
   coverageDensity: 'compact' | 'default' | 'comfortable';
+  /** Whether the Art Grid highlights the cell whose printing matches the
+   *  card's preferred default. Persisted so the toggle sticks. */
+  artGridPreferredHighlight: boolean;
+  /** Last-selected target aesthetic on the Blockers (Outliers) view.
+   *  Persisted so the user's pick survives reloads. Empty string means
+   *  "fall back to the data-driven default" (top spotlight, then highest
+   *  coverage). */
+  outliersTarget: string;
   /** Aesthetic groups collapsed in the Coverage view. */
   coverageCollapsedGroups: string[];
   /** Filter group names collapsed in the left sidebar (per-group toggle). */
@@ -56,6 +80,8 @@ interface State {
 
   // Loaded
   aesthetics: Aesthetic[];
+  /** Map: set code -> Scryfall icon SVG URL. Populated from /api/sets. */
+  setIcons: Record<string, string>;
   health: HealthResponse | null;
   result: AnalyzeResponse | null;
   loading: boolean;
@@ -72,19 +98,26 @@ interface State {
   clearAesthetics: () => void;
   setIncludeSideboard: (v: boolean) => void;
   setIncludeBasics: (v: boolean) => void;
+  setAllowNonTournament: (v: boolean) => void;
+  setAllowDigital: (v: boolean) => void;
+  setDisabledSets: (codes: string[]) => void;
+  toggleDisabledSet: (code: string) => void;
   setPrintingStrategy: (s: PrintingStrategy) => void;
   setView: (v: ViewMode) => void;
   setCardSize: (n: number) => void;
   /** Set the card size for a specific view (per-view persistence). */
   setCardSizeForView: (v: ViewMode, n: number) => void;
   setAesthetics: (a: Aesthetic[]) => void;
+  setSetIcons: (m: Record<string, string>) => void;
   setHealth: (h: HealthResponse) => void;
   setResult: (r: AnalyzeResponse | null) => void;
   setLoading: (b: boolean) => void;
   setError: (e: string | null) => void;
-  openDrawer: (id: string | null) => void;
+  openDrawer: (id: string | null, card?: { oracle_id: string | null; name: string } | null) => void;
   setCompareAesthetics: (ids: [string | null, string | null]) => void;
   setCoverageDensity: (d: 'compact' | 'default' | 'comfortable') => void;
+  setArtGridPreferredHighlight: (v: boolean) => void;
+  setOutliersTarget: (id: string) => void;
   toggleCoverageGroup: (group: string) => void;
   toggleFilterGroupCollapsed: (group: string) => void;
   toggleSpotlightGroupCollapsed: (group: string) => void;
@@ -110,19 +143,27 @@ export const useStore = create<State>()(
       gallerySpotExcluded: [],
       includeSideboard: true,
       includeBasics: false,
-      printingStrategy: ['paper', 'lang:en', 'foil:nonfoil', 'border:black', 'first'],
-      view: 'consistency',
+      allowNonTournament: true,
+      allowDigital: false,
+      disabledSets: [],
+      printingStrategy: ['paper', 'lang:en', 'foil:nonfoil', 'frame:1993', 'frame:1997', 'border:black', 'first'],
+      view: 'gallery',
       cardSize: 168,
       cardSizeByView: {},
       drawerAestheticId: null,
+      drawerCardOracleId: null,
+      drawerCardName: null,
       compareAesthetics: [null, null],
       coverageDensity: 'default',
+      artGridPreferredHighlight: true,
+      outliersTarget: 'frame_1997',
       coverageCollapsedGroups: [],
       collapsedFilterGroups: [],
       collapsedSpotlightGroups: [],
       spotlightBarCollapsed: false,
 
       aesthetics: [],
+      setIcons: {},
       health: null,
       result: null,
       loading: false,
@@ -152,6 +193,18 @@ export const useStore = create<State>()(
       clearAesthetics: () => set({ selectedAesthetics: new Set() }),
       setIncludeSideboard: (v) => set({ includeSideboard: v }),
       setIncludeBasics: (v) => set({ includeBasics: v }),
+      setAllowNonTournament: (v) => set({ allowNonTournament: v }),
+      setAllowDigital: (v) => set({ allowDigital: v }),
+      setDisabledSets: (codes) => set({ disabledSets: codes }),
+      toggleDisabledSet: (code) =>
+        set((st) => {
+          const cur = st.disabledSets;
+          return {
+            disabledSets: cur.includes(code)
+              ? cur.filter((c) => c !== code)
+              : [...cur, code],
+          };
+        }),
       setPrintingStrategy: (s) => set({ printingStrategy: s }),
       setView: (v) => set({ view: v }),
       setCardSize: (n) => set({ cardSize: Math.max(80, Math.min(360, Math.round(n))) }),
@@ -163,13 +216,21 @@ export const useStore = create<State>()(
           },
         })),
       setAesthetics: (a) => set({ aesthetics: a }),
+      setSetIcons: (m) => set({ setIcons: m }),
       setHealth: (h) => set({ health: h }),
       setResult: (r) => set({ result: r }),
       setLoading: (b) => set({ loading: b }),
       setError: (e) => set({ error: e }),
-      openDrawer: (id) => set({ drawerAestheticId: id }),
+      openDrawer: (id, card) =>
+        set({
+          drawerAestheticId: id,
+          drawerCardOracleId: id && card ? card.oracle_id : null,
+          drawerCardName: id && card ? card.name : null,
+        }),
       setCompareAesthetics: (ids) => set({ compareAesthetics: ids }),
       setCoverageDensity: (d) => set({ coverageDensity: d }),
+      setArtGridPreferredHighlight: (v) => set({ artGridPreferredHighlight: v }),
+      setOutliersTarget: (id) => set({ outliersTarget: id }),
       toggleCoverageGroup: (group) =>
         set((st) => {
           const cur = st.coverageCollapsedGroups;
@@ -267,11 +328,16 @@ export const useStore = create<State>()(
         gallerySpotExcluded: s.gallerySpotExcluded,
         includeSideboard: s.includeSideboard,
         includeBasics: s.includeBasics,
+        allowNonTournament: s.allowNonTournament,
+        allowDigital: s.allowDigital,
+        disabledSets: s.disabledSets,
         printingStrategy: s.printingStrategy,
         view: s.view,
         cardSize: s.cardSize,
         cardSizeByView: s.cardSizeByView,
         coverageDensity: s.coverageDensity,
+        artGridPreferredHighlight: s.artGridPreferredHighlight,
+        outliersTarget: s.outliersTarget,
         coverageCollapsedGroups: s.coverageCollapsedGroups,
         collapsedFilterGroups: s.collapsedFilterGroups,
         collapsedSpotlightGroups: s.collapsedSpotlightGroups,
@@ -324,11 +390,35 @@ export const useStore = create<State>()(
             p.coverageDensity === 'compact' || p.coverageDensity === 'default' || p.coverageDensity === 'comfortable'
               ? p.coverageDensity
               : current.coverageDensity,
+          artGridPreferredHighlight:
+            typeof p.artGridPreferredHighlight === 'boolean'
+              ? p.artGridPreferredHighlight
+              : current.artGridPreferredHighlight,
+          outliersTarget:
+            typeof p.outliersTarget === 'string'
+              ? p.outliersTarget
+              : current.outliersTarget,
+          // Persisted state from older builds may be missing the new
+          // legality / source toggles. Spreading `p` above would set
+          // them to `undefined`; reassert sane defaults.
+          allowNonTournament:
+            typeof p.allowNonTournament === 'boolean'
+              ? p.allowNonTournament
+              : current.allowNonTournament,
+          allowDigital:
+            typeof p.allowDigital === 'boolean'
+              ? p.allowDigital
+              : current.allowDigital,
+          disabledSets: Array.isArray(p.disabledSets)
+            ? (p.disabledSets as string[])
+            : current.disabledSets,
           // Removed view modes — fall back to a sensible default.
           view:
             (p.view as string) === 'matrix' ||
             (p.view as string) === 'recommend' ||
             (p.view as string) === 'sets' ||
+            (p.view as string) === 'mosaic' ||
+            (p.view as string) === 'consistency' ||
             !p.view
               ? current.view
               : (p.view as ViewMode),
@@ -388,7 +478,6 @@ export function matchesSpotlight(
 export function viewSupportsSpotlight(view: ViewMode): boolean {
   return (
     view === 'gallery' ||
-    view === 'mosaic' ||
     view === 'art' ||
     view === 'timeline' ||
     view === 'percard'
@@ -535,11 +624,9 @@ export function defaultCardSizeFor(view: ViewMode): number {
   const widthBucket = w >= 2200 ? 'xl' : w >= 1600 ? 'lg' : w >= 1200 ? 'md' : w >= 900 ? 'sm' : 'xs';
   const table: Record<ViewMode, Record<string, number>> = {
     gallery:     { xl: 200, lg: 176, md: 156, sm: 140, xs: 120 },
-    mosaic:      { xl: 144, lg: 128, md: 116, sm: 100, xs:  88 },
     art:         { xl: 220, lg: 196, md: 176, sm: 156, xs: 132 },
     compare:     { xl: 220, lg: 196, md: 176, sm: 156, xs: 132 },
     percard:     { xl: 168, lg: 160, md: 152, sm: 140, xs: 120 },
-    consistency: { xl: 168, lg: 168, md: 168, sm: 168, xs: 168 },
     funnel:      { xl: 168, lg: 168, md: 168, sm: 168, xs: 168 },
     outliers:    { xl: 168, lg: 168, md: 168, sm: 168, xs: 168 },
     timeline:    { xl: 168, lg: 168, md: 168, sm: 168, xs: 168 },

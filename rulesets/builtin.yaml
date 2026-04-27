@@ -143,6 +143,15 @@ aesthetics:
     match:
       equals: { set: "sta" }
 
+  - id: showcase_mystical_archive_jp
+    label: "Mystical Archive (Japanese)"
+    description: "Japanese-language alt-art Mystical Archive printings."
+    group: "Showcase Treatment"
+    match:
+      all:
+        - equals: { set: "sta" }
+        - equals: { lang: "ja" }
+
   - id: showcase_retro_schematic
     label: "Retro Schematic"
     description: "Brothers' War retro artifacts schematic showcase."

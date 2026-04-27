@@ -152,12 +152,15 @@ h2 {
   border-color: color-mix(in srgb, var(--gc, var(--accent)) 55%, transparent);
 }
 
-/* ---- Aesthetic group panels (left filter sidebar) ---- */
+/* ---- Aesthetic group panels (left filter sidebar) ----
+ * `--gc` is set by the universal `.g-*` mapping at the top of this file
+ * (e.g. `.g-frame { --gc: var(--gc-frame); }`). The fallback to `--accent`
+ * lives in the consumers via `var(--gc, var(--accent))` so we don't
+ * shadow the per-group color when both selectors match this element. */
 .group-panel {
-  --gc: var(--accent);
   background: var(--bg-2);
   border: 1px solid var(--border-soft);
-  border-left: 3px solid var(--gc);
+  border-left: 3px solid var(--gc, var(--accent));
   border-radius: 6px;
   padding: 10px 12px;
   margin-bottom: 10px;
@@ -167,7 +170,7 @@ h2 {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 1.2px;
-  color: var(--gc);
+  color: var(--gc, var(--accent));
   margin-bottom: 8px;
   display: flex;
   align-items: center;
@@ -1530,15 +1533,21 @@ a.cov-mark:hover { background: var(--accent); }
 }
 .art-cell-meta .ac-price:hover { filter: brightness(1.2); }
 
-/* Subtly highlight the cell whose printing matches the row's preferred. */
+/* Highlight the cell whose printing matches the row's preferred. Uses a
+ * distinct accent (teal `--accent-2`) so it stands out against the
+ * per-group color palette of surrounding cells. The PREFERRED text label
+ * was removed in favor of just the visual highlight. */
 .art-cell.preferred {
-  outline: 1px solid color-mix(in srgb, var(--accent) 70%, transparent);
-  outline-offset: -1px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  outline: 3px solid var(--accent-2);
+  outline-offset: -3px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent-2) 18%, transparent);
+  position: relative;
+  z-index: 1;
 }
 .art-cell.preferred .art-cell-img {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent) inset;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-2) 80%, transparent) inset,
+              0 0 12px color-mix(in srgb, var(--accent-2) 50%, transparent);
 }
 
 /* === Insights views === */
@@ -1583,148 +1592,9 @@ a.cov-mark:hover { background: var(--accent); }
   color: var(--muted);
 }
 
-/* ---- Consistency view ---- */
-.cs-grid {
-  display: grid;
-  grid-template-columns: minmax(220px, 320px) 1fr;
-  gap: 16px;
-  align-items: stretch;
-}
-.cs-score-card {
-  border-radius: 10px;
-  padding: 18px 20px;
-  color: #0e1216;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-.cs-score-num { font-size: 64px; font-weight: 700; line-height: 1; letter-spacing: -1px; }
-.cs-score-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  margin-top: 4px;
-  font-weight: 600;
-}
-.cs-score-sub { font-size: 11px; margin-top: 4px; color: rgba(0,0,0,0.55); }
-.cs-summary {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
-  background: var(--bg-2);
-}
-.cs-stat-num { font-size: 28px; font-weight: 600; }
-.cs-stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+/* ---- Consistency / Identity view removed. ---- */
 
-.cs-groupbest { display: flex; flex-direction: column; gap: 4px; }
-.cs-gb-row {
-  display: grid;
-  grid-template-columns: 110px 1fr 240px 48px;
-  gap: 8px;
-  align-items: center;
-  padding: 4px 8px;
-  border-left: 3px solid var(--gc, var(--accent));
-  background: color-mix(in srgb, var(--gc, var(--accent)) 8%, transparent);
-  border-radius: 4px;
-}
-.cs-gb-group { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--gc, var(--accent)); font-weight: 600; }
-.cs-gb-bar { height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
-.cs-gb-bar-fill { display: block; height: 100%; background: var(--gc, var(--accent)); }
-.cs-gb-pct { text-align: right; font-variant-numeric: tabular-nums; }
-
-.cs-top3 {
-  list-style: decimal inside;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.cs-top3 li {
-  border-left: 3px solid var(--gc, var(--accent));
-  background: color-mix(in srgb, var(--gc, var(--accent)) 6%, transparent);
-  padding: 6px 10px;
-  border-radius: 4px;
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.cs-top-pct { margin-left: auto; font-weight: 600; font-variant-numeric: tabular-nums; }
-
-.cs-blockers {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 8px;
-}
-.cs-blocker {
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.cs-blocker img { width: 100%; aspect-ratio: 626 / 457; object-fit: cover; display: block; }
-.cs-blocker-meta { display: flex; gap: 6px; padding: 4px 8px; font-size: 11px; align-items: baseline; }
-.cs-blocker-qty { font-weight: 600; color: var(--accent); }
-.cs-blocker-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cs-blocker.more {
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  font-size: 12px;
-  border-style: dashed;
-}
-
-/* ---- Mosaic ---- */
-.mosaic-stats { margin-bottom: 8px; font-size: 12px; }
-.mosaic-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(var(--card-size, 168px), 1fr));
-  gap: 4px;
-}
-.mosaic-tile {
-  position: relative;
-  cursor: pointer;
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--bg-2);
-  aspect-ratio: 626 / 457;
-  transition: transform 0.08s ease;
-}
-.mosaic-tile:hover { transform: scale(1.04); z-index: 2; }
-.mosaic-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.mosaic-tile.dim img { filter: grayscale(0.85) brightness(0.55); }
-.mosaic-empty { padding: 8px; font-size: 10px; color: var(--muted); }
-.mosaic-qty {
-  position: absolute;
-  top: 2px;
-  left: 4px;
-  font-size: 10px;
-  font-weight: 700;
-  background: rgba(0,0,0,0.6);
-  color: #fff;
-  padding: 1px 4px;
-  border-radius: 3px;
-}
-.mosaic-dots {
-  position: absolute;
-  bottom: 3px;
-  left: 4px;
-  display: flex;
-  gap: 2px;
-}
-.mosaic-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--gc, var(--accent));
-  box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
-}
+/* ---- Mosaic page removed; rules dropped. ---- */
 
 /* ---- Funnel ---- */
 .funnel-toolbar { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
@@ -1858,10 +1728,20 @@ a.cov-mark:hover { background: var(--accent); }
   border-radius: 3px;
   background: var(--bg);
   border: 1px solid var(--border);
+  /* Belt-and-suspenders: clip the inner art crop. The popover lives in a
+   * span with its own positioning, but the tile's own img must always be
+   * clipped to 36×46 — without overflow:hidden, weird browser-zoom or
+   * filter interactions can let the natural image size leak out. */
+  overflow: hidden;
 }
-/* Only the tile's own art crop should fill the tile; the hover-preview
- * card image lives in its own popover and must not inherit object-fit. */
-.tl-tile > img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; overflow: hidden; }
+.tl-tile > img,
+.tl-tile > .tl-tile-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: inherit;
+}
 .tl-tile-empty { font-size: 9px; padding: 4px; color: var(--muted); }
 /* Removed the scale(1.6) blow-up on hover — the new hover popover replaces
  * it with a real card image, and the scale combined with overflow:hidden
@@ -2074,36 +1954,7 @@ a.cov-mark:hover { background: var(--accent); }
 /* Showcase Treatment color (distinct from Treatment lavender) */
 /* g-showcase color is defined once at the top of the file. */
 
-/* Score view: row of three numerics */
-.cs-scores {
-  display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-.cs-score-card.big { color: #0e1216; }
-.cs-score-card.sub {
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  padding: 14px 16px;
-}
-.cs-score-card.sub .cs-score-num {
-  font-size: 40px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-.cs-score-card.sub .cs-score-sub { color: var(--muted); }
-.cs-score-card .cs-score-num { font-variant-numeric: tabular-nums; }
-
-/* Score: preferred-coverage overlay on the per-group bar */
-.cs-gb-bar { position: relative; height: 8px; background: rgba(255,255,255,0.06); border-radius: 4px; overflow: hidden; }
-.cs-gb-bar-fill { position: absolute; left: 0; top: 0; height: 100%; background: var(--gc, var(--accent)); }
-.cs-gb-bar-fill.preferred {
-  background: color-mix(in srgb, var(--gc, var(--accent)) 50%, var(--text));
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.45);
-  height: 100%;
-}
+/* Score / Identity view CSS removed along with the view itself. */
 
 /* === Phase 1: import block & collapsed summary === */
 .import-block { margin-bottom: 8px; }
@@ -2211,7 +2062,7 @@ a.cov-mark:hover { background: var(--accent); }
   border-left: 3px solid var(--gc, var(--accent));
   border-radius: 0 4px 4px 0;
   background: color-mix(in srgb, var(--gc, var(--accent)) 6%, transparent);
-  --gc: var(--accent);
+  /* `--gc` is set by .g-* mapping at the top of this file. */
 }
 .spotlight-group + .spotlight-group { /* divider via top margin only when stacked */ }
 .spotlight-group-title {
@@ -2306,13 +2157,10 @@ a.cov-mark:hover { background: var(--accent); }
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 6px 8px;
+  padding: 6px 4px 4px;
   font-size: 11px;
-  background: rgba(0,0,0,0.35);
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  /* Sit BELOW the card image rather than overlaying it so the art and
+   * the metadata never compete for the same pixels. */
 }
 .printings-popover.v2 .pp-featured-meta .pp-set { font-weight: 700; }
 .printings-popover.v2 .pp-featured-meta .pp-price { margin-left: auto; color: var(--accent-2); font-variant-numeric: tabular-nums; }
@@ -2366,16 +2214,24 @@ a.cov-mark:hover { background: var(--accent); }
   filter: hue-rotate(0);
 }
 .printings-popover.v2 .pp-close {
-  background: none;
-  border: none;
-  color: var(--muted);
-  font-size: 18px;
+  /* Visible, prominent X in the corner of the pinned popover. The
+   * popover is sticky now (only X / Esc dismisses) so the close
+   * affordance needs to read clearly. */
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 16px;
   line-height: 1;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 2px 8px 4px;
   margin-left: 2px;
+  border-radius: 4px;
 }
-.printings-popover.v2 .pp-close:hover { color: var(--text); }
+.printings-popover.v2 .pp-close:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
 /* Pinned: allow a long printings strip to wrap onto multiple rows and
    scroll vertically inside the popover so the user can browse without the
    overall popover overflowing the viewport. */
@@ -2601,46 +2457,11 @@ a.cov-mark:hover { background: var(--accent); }
 .art-grid-header.sticky-left-2 { z-index: 4; }
 .art-grid .preferred-col-header { background: var(--bg-2); }
 
-/* === Timeline tile hover preview === */
-/* The default hover-preview pops below-left, but tiles are 36px wide and
- * sit on a timeline that may extend past the viewport. Anchor the preview
- * at the tile center, translate so it doesnt push past either edge. */
-.tl-tile.hover-preview { cursor: pointer; }
-/* The default .hover-preview is `position: relative`, but our tile is
- * already absolutely positioned and the popover should escape the tile's
- * normal flow; we keep position:relative on the parent (already implicit
- * because tile uses absolute), just override the popover's inherited
- * sizing/object-fit so the inner image renders at its natural ratio. */
-.tl-tile .tl-hover-preview {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: 240px;
-  max-width: 240px;
-  height: auto;
-  pointer-events: none;
-  z-index: 60;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  display: none;
-}
-.tl-tile.hover-preview:hover .tl-hover-preview { display: block; }
-.tl-tile .tl-hover-preview img {
-  width: 232px !important;   /* 240 - 2*4 padding */
-  height: auto !important;
-  object-fit: contain !important;
-  border-radius: 4px;
-  display: block;
-}
-/* Tiles in the bottom half of the track flip the preview above to keep it
- * inside the viewport. Pure CSS approximation: tiles past 60% down the
- * track flip via the ":nth-of-type" anchor isnt reliable; we use a
- * conservative bottom-positioned variant via a class instead, applied
- * client-side if needed. For now, allow the page to scroll naturally. */
+/* === Timeline tile === */
+/* Tiles use only the native `title` tooltip on hover for now. A richer
+ * popover preview was tried but conflicted with the tile's required
+ * `overflow:hidden` (which clips the natural-size art crop image to the
+ * 36×46 tile). Revisit with a portal-rendered popover. */
 
 /* Left-nav data status row \u2014 anchors the persistent loading spinner. */
 .data-status { margin-bottom: 6px; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
@@ -2658,4 +2479,298 @@ h1.brand-row .loading-spinner {
   width: 16px;
   height: 16px;
   border-width: 2px;
+}
+
+/* === Art Grid: toolbar + top scrollbar + per-aesthetic group tint === */
+.art-grid-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.art-grid-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text-soft);
+}
+.art-grid-toggle input[type="checkbox"] {
+  accent-color: var(--accent-2);
+  width: 14px;
+  height: 14px;
+}
+.art-grid-toggle:hover { color: var(--text); }
+
+/* Top scrollbar mirrors the inner grid's horizontal scroll. */
+.art-grid-top-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 14px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.art-grid-top-scroll-phantom {
+  height: 1px;        /* invisible row that matches inner grid scrollWidth */
+  min-width: 100%;
+}
+
+/* Per-aesthetic-group column tint. Both the column header AND every cell
+ * in that column carry a .g-frame / .g-border / etc. class, which
+ * sets --gc via the universal mapping. We use a very faint background
+ * tint (4-6%) so groups read as bands without competing with the card art. */
+.art-grid-header.g-frame, .art-cell.g-frame,
+.art-grid-header.g-border, .art-cell.g-border,
+.art-grid-header.g-treat, .art-cell.g-treat,
+.art-grid-header.g-showcase, .art-cell.g-showcase,
+.art-grid-header.g-promo, .art-cell.g-promo,
+.art-grid-header.g-origin, .art-cell.g-origin,
+.art-grid-header.g-other, .art-cell.g-other {
+  background: color-mix(in srgb, var(--gc, var(--accent)) 5%, transparent);
+}
+.art-grid-header.g-frame, .art-grid-header.g-border, .art-grid-header.g-treat,
+.art-grid-header.g-showcase, .art-grid-header.g-promo, .art-grid-header.g-origin,
+.art-grid-header.g-other {
+  /* Slightly stronger header tint + a 2px top border in the group color
+   * to make the band distinct from neighbors. */
+  background: color-mix(in srgb, var(--gc, var(--accent)) 14%, transparent);
+  border-top: 2px solid var(--gc, var(--accent));
+}
+.art-grid-header.g-frame .hdr-group, .art-grid-header.g-border .hdr-group,
+.art-grid-header.g-treat .hdr-group, .art-grid-header.g-showcase .hdr-group,
+.art-grid-header.g-promo .hdr-group, .art-grid-header.g-origin .hdr-group,
+.art-grid-header.g-other .hdr-group {
+  color: var(--gc, var(--muted));
+  font-weight: 600;
+}
+
+/* Coverage cell version-count badge: overlays the colored block so the
+ * square stays as the primary "is present" affordance and the count
+ * sits centered on top of it. Uses a high-contrast color (currentColor
+ * driven by the white/black pick below) and a soft shadow for legibility. */
+.coverage-table .cov-cell .cov-block {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  line-height: 0;
+}
+.coverage-table .cov-cell .cov-block .cov-mark {
+  /* The colored square keeps its density-driven sizing from the rules above. */
+  display: inline-block;
+}
+.coverage-table .cov-cell .cov-count {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  /* White on the group-tinted block reads cleanly across all the group
+   * colors we use; the subtle dark text-shadow keeps it legible if the
+   * underlying tint ever lightens (e.g. hover background-mix). */
+  color: #fff;
+  text-shadow: 0 1px 1.5px rgba(0, 0, 0, 0.55);
+  line-height: 1;
+  pointer-events: none;
+}
+.coverage-wrap[data-density="compact"] .cov-count { font-size: 9px; }
+.coverage-wrap[data-density="comfortable"] .cov-count { font-size: 13px; }
+
+/* Drawer: focused per-card section spacing. Visually separated from the
+ * generic "Available" / "Missing" lists by a hairline + extra margin. */
+.drawer .drawer-section.drawer-focused {
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* === Settings modal === */
+.drawer.settings-modal { max-width: 720px; width: 100%; }
+.settings-section { margin-top: 18px; }
+.settings-section h2 { display: flex; align-items: center; }
+.settings-group { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--border-soft); }
+.settings-group-head {
+  display: flex;
+  align-items: center;
+  padding: 4px 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+}
+.settings-group-name { color: var(--text-soft); font-weight: 600; }
+.settings-set-list { list-style: none; margin: 0; padding: 0; }
+.settings-set-row {
+  padding: 2px 0;
+  font-size: 12px;
+}
+.settings-set-row label.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+.settings-set-row label.row:hover { background: var(--accent-soft); }
+.settings-set-row.off { opacity: 0.55; }
+.settings-set-icon {
+  width: 14px;
+  height: 14px;
+  filter: brightness(0) invert(1);
+}
+.settings-set-code {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.4px;
+  min-width: 38px;
+}
+.settings-set-name { color: var(--text); flex: 1; }
+.settings-set-meta { font-size: 10px; }
+.settings-set-flag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 1px 5px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+/* === Blockers: substitutes modal === */
+.drawer.substitutes-modal { max-width: 760px; width: 100%; }
+.substitutes-modal .sub-section { margin-top: 18px; }
+.substitutes-modal .sub-subgroup { margin-top: 10px; }
+.substitutes-modal .sub-subgroup-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--gc, var(--text-soft));
+  border-bottom: 1px solid color-mix(in srgb, var(--gc, var(--border-soft)) 40%, var(--border-soft));
+  margin-bottom: 8px;
+}
+.substitutes-modal .sub-subgroup-name { font-weight: 700; }
+.substitutes-modal .sub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.substitutes-modal .sub-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--gc, var(--accent));
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 80ms, border-color 80ms, background 80ms;
+}
+.substitutes-modal .sub-tile:hover {
+  transform: translateY(-2px);
+  border-color: var(--gc, var(--accent));
+  background: color-mix(in srgb, var(--gc, var(--accent)) 8%, var(--bg-2));
+}
+.substitutes-modal .sub-tile-img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 5 / 7;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.substitutes-modal .sub-tile-img img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.substitutes-modal .sub-tile-placeholder {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, var(--panel), var(--bg-2));
+}
+.substitutes-modal .sub-tile-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.substitutes-modal .sub-tile-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.substitutes-modal .sub-tile-set {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.4px;
+}
+
+/* === Non-tournament-legal printing overlay ===
+ * Diagonal red banner across the card art for any printing the backend
+ * tagged as not tournament-legal (gold/silver border, funny / memorabilia
+ * set_type, 30A). Keeps the art readable underneath but unmistakably
+ * flags the printing as a last-resort fallback. */
+.not-legal-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 5;
+}
+.not-legal-band {
+  display: inline-block;
+  padding: 4px 80px;
+  background: rgba(220, 38, 38, 0.92);
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,255,255,0.25);
+  transform: rotate(-30deg);
+  transform-origin: center;
+}
+/* Smaller variant suitable for the printings-popover thumbnail strip
+   where the cell is too small for the full banner. */
+.pp-strip-cell .pp-strip-illegal {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(220, 38, 38, 0.95);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  z-index: 6;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.5);
 }

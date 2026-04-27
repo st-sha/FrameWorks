@@ -64,6 +64,15 @@ export function MtgCard({
         )}
         {qty != null && img && <div className="qty-badge">{qty}×</div>}
         {overlay}
+        {/* Diagonal red banner for non-tournament-legal printings. Only
+            renders when the backend explicitly tagged the printing as
+            non-legal AND we actually have an image to overlay (so the
+            placeholder card doesn't get the banner). */}
+        {img && printing && printing.is_tournament_legal === false && (
+          <div className="not-legal-overlay" aria-hidden>
+            <span className="not-legal-band">Not tournament legal</span>
+          </div>
+        )}
       </div>
       {/* Missing label sits as a SIBLING of .mtg-card (not a child) so the
           card's grayscale+brightness filter doesn't drag the label down

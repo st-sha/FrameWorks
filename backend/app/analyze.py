@@ -20,6 +20,41 @@ BASIC_LANDS = {
     "snow-covered mountain", "snow-covered forest", "wastes",
 }
 
+# Set codes / set_type values that mark a printing as "not legal in any
+# standard tournament paper format." Used as a fallback when the per-
+# printing `tournament_legal` column from Scryfall's `legalities` map
+# isn't available (e.g. a fresh DB before refresh, or older bulk data).
+_NON_TOURNAMENT_BORDERS = {"silver", "gold"}
+_NON_TOURNAMENT_SET_TYPES = {"funny", "memorabilia"}
+_NON_TOURNAMENT_SETS = {"30a", "30c"}
+
+
+def _is_tournament_legal(p: dict) -> bool:
+    """Return True iff the printing is legal in some standard paper format.
+
+    Authoritative source is Scryfall's per-printing `legalities` struct,
+    which we cache as a `tournament_legal` BOOLEAN at ingest. That field
+    correctly handles awkward cases like:
+      - Embiggen reprints in The List (legal) vs the original silver-
+        border Unstable printing (not legal).
+      - Black-border Heroes / Tales reprints in eternal-legal supplemental
+        sets even though their parent set_type is 'memorabilia'.
+      - Acorn-stamped Unfinity cards (not legal) sitting alongside the
+        non-acorn ones from the same set (legal).
+
+    Falls back to a coarse heuristic only when the column is missing."""
+    val = p.get("tournament_legal")
+    if val is not None:
+        return bool(val)
+    # Heuristic fallback (pre-refresh / very old DB).
+    if p.get("border_color") in _NON_TOURNAMENT_BORDERS:
+        return False
+    if p.get("set_type") in _NON_TOURNAMENT_SET_TYPES:
+        return False
+    if p.get("set") in _NON_TOURNAMENT_SETS:
+        return False
+    return True
+
 
 def _resolve_names(entries: list[DecklistEntry]) -> tuple[dict[str, str], list[str]]:
     """Map normalized name -> oracle_id. Returns (resolved, unresolved_names)."""
@@ -150,7 +185,12 @@ def _resolve_spec(spec: str):
 
 
 def _printing_to_example(p: dict) -> dict:
-    """Project a raw printing dict down to the public PerCardExample shape."""
+    """Project a raw printing dict down to the public PerCardExample shape.
+
+    Includes `is_tournament_legal` so the frontend can paint a warning
+    overlay on non-legal printings (gold-border WC, silver-border
+    un-sets, 30A, memorabilia, …) when the user has opted to allow them.
+    """
     return {
         "set": p["set"],
         "set_name": p["set_name"],
@@ -160,6 +200,7 @@ def _printing_to_example(p: dict) -> dict:
         "price_usd": p["price_usd"],
         "released_at": p["released_at"],
         "frame": p["frame"],
+        "is_tournament_legal": _is_tournament_legal(p),
     }
 
 
@@ -178,7 +219,17 @@ def _python_sort_keys(printing_strategy: list[str] | str | None):
     """
     if isinstance(printing_strategy, str):
         printing_strategy = [printing_strategy]
-    keys = [lambda p: 0 if not p.get("digital") else 1]
+    # Hardcoded primary demotions, in order of priority:
+    #   1. Paper before digital — same as the SQL ORDER BY.
+    #   2. Tournament-legal before non-tournament-legal. When the user
+    #      has *allowed* non-tournament cards, we still want them to
+    #      appear only as a last resort, never preempting a legal
+    #      alternative. (When the toggle is off they're filtered out
+    #      entirely, so this key is a no-op.)
+    keys = [
+        lambda p: 0 if not p.get("digital") else 1,
+        lambda p: 0 if _is_tournament_legal(p) else 1,
+    ]
     seen: set[str] = {"paper"}  # the implicit paper-first key
     for s in printing_strategy or []:
         if s in seen:
@@ -210,17 +261,24 @@ def _fragment_for(spec: str) -> str | None:
 def _order_clause(strategies: list[str] | str | None) -> str:
     """Build a layered ORDER BY from a list of preference specs (in order).
 
-    Digital-only printings (MTGO/Arena) are always demoted below every paper
-    printing regardless of user preferences — they only surface when no paper
-    printing exists. This is hardcoded as the highest-priority sort key.
+    Two hardcoded primary demotions before user preferences:
+      - Digital-only printings (MTGO/Arena) sort below paper printings.
+      - Non-tournament-legal printings sort below tournament-legal
+        printings, using the per-printing `tournament_legal` column
+        (sourced from Scryfall's `legalities` map) so reprints in
+        eternal-legal sets correctly outrank their silver-border
+        / acorn-stamp originals.
+    Both demotions match the Python sort keys exactly so SQL and Python
+    rankings stay in lockstep.
     """
     paper_first = "(digital = false) DESC"
+    legal_first = "COALESCE(tournament_legal, true) DESC"
     if isinstance(strategies, str):
         strategies = [strategies]
-    parts: list[str] = [paper_first]
+    parts: list[str] = [paper_first, legal_first]
     for s in strategies or []:
         frag = _fragment_for(s)
-        if frag and frag != paper_first:
+        if frag and frag != paper_first and frag != legal_first:
             parts.append(frag)
     return ", ".join(parts) + ", " + _TIEBREAKER_TAIL
 
@@ -231,6 +289,9 @@ def analyze(
     include_sideboard: bool = True,
     include_basics: bool = False,
     printing_strategy: list[str] | str | None = None,
+    allow_non_tournament: bool = True,
+    disabled_sets: list[str] | None = None,
+    allow_digital: bool = False,
 ) -> dict:
     # Filter
     filtered: list[DecklistEntry] = []
@@ -288,7 +349,7 @@ def analyze(
                        released_at, frame, border_color, frame_effects,
                        full_art, textless, promo, promo_types, digital,
                        lang, layout, security_stamp, set_type,
-                       nonfoil, foil
+                       nonfoil, foil, tournament_legal
                 FROM printings
                 WHERE oracle_id IN ({oracle_placeholders})
                   AND image_normal IS NOT NULL
@@ -297,11 +358,16 @@ def analyze(
             ).fetchall()
 
         # Group printings per oracle_id; build a raw dict for each.
+        # Apply tournament-legality + per-set filters here so every
+        # downstream consumer (default-pick, examples, version_counts,
+        # aesthetic counts, summary totals) sees the same filtered pool.
+        disabled_set_codes = set(disabled_sets or [])
         printings_by_oracle: dict[str, list[dict]] = defaultdict(list)
         for row in all_rows:
             (oid, set_code, set_name, cn, img, art, price, released, frame,
              border, frame_effects, full_art, textless, promo, promo_types,
-             digital, lang, layout, sec_stamp, set_type, nonfoil, foil) = row
+             digital, lang, layout, sec_stamp, set_type, nonfoil, foil,
+             tournament_legal) = row
             p = {
                 "oracle_id": oid,
                 "set": set_code,
@@ -325,7 +391,14 @@ def analyze(
                 "set_type": set_type,
                 "nonfoil": nonfoil,
                 "foil": foil,
+                "tournament_legal": tournament_legal,
             }
+            if set_code in disabled_set_codes:
+                continue
+            if not allow_non_tournament and not _is_tournament_legal(p):
+                continue
+            if not allow_digital and p.get("digital"):
+                continue
             printings_by_oracle[oid].append(p)
 
         # Sort each oracle's printings by the user-requested preference
@@ -339,13 +412,14 @@ def analyze(
         # Evaluate every aesthetic predicate over every printing once.
         # Total work: cards × printings × aesthetics — but each predicate
         # is a tiny lambda chain, so this is far faster than 41 SQL probes.
-        # Early-exit per oracle: once we've found an example for every
-        # aesthetic, we can stop walking that oracle's lower-ranked
-        # printings entirely.
-        n_aesthetics = len(aesthetics)
+        # `version_counts[oid][aid]` tracks how many distinct printings of
+        # this oracle satisfy each aesthetic — surfaced to the Coverage
+        # view so each cell can show "N versions match".
         ver = _AESTHETICS_VERSION
+        version_counts: dict[str, dict[str, int]] = {}
         for oid, plist in printings_by_oracle.items():
             covered_for_oid: set[str] = set()
+            counts_for_oid: dict[str, int] = {}
             for p in plist:
                 key = (p["set"], p["collector_number"])
                 sat = printing_satisfies.get(key)
@@ -364,12 +438,12 @@ def analyze(
                 # already sorted by preference, so the first matching entry
                 # we see for each (oid, aesthetic) wins.
                 for aid in sat:
+                    counts_for_oid[aid] = counts_for_oid.get(aid, 0) + 1
                     if aid not in covered_for_oid:
                         example_printing[aid][oid] = _printing_to_example(p)
                         available_by_aesthetic[aid].add(oid)
                         covered_for_oid.add(aid)
-                if len(covered_for_oid) >= n_aesthetics:
-                    break
+            version_counts[oid] = counts_for_oid
 
         # Default printing = top-ranked printing per oracle (regardless of
         # aesthetic). Match the legacy SQL behaviour exactly.
@@ -442,6 +516,10 @@ def analyze(
             "default_aesthetics": default_ids,
             "examples": examples,
             "default": default_printing.get(oid) if oid else None,
+            # Per-aesthetic count of distinct printings of this oracle
+            # that satisfy that aesthetic. Drives the Coverage view's
+            # "N versions" cell badge.
+            "version_counts": (version_counts.get(oid, {}) if oid else {}),
         })
 
     return {
@@ -460,7 +538,10 @@ def analyze(
 def cache_key(entries: Iterable[DecklistEntry], aesthetic_ids: tuple[str, ...],
               include_sideboard: bool, include_basics: bool,
               printing_strategy: tuple[str, ...] | str | None,
-              data_version: str | None) -> str:
+              data_version: str | None,
+              allow_non_tournament: bool,
+              disabled_sets: tuple[str, ...],
+              allow_digital: bool) -> str:
     h = hashlib.sha256()
     for e in sorted(entries, key=lambda x: (x.section, x.name, x.qty)):
         h.update(f"{e.section}|{e.qty}|{e.name}\n".encode())
@@ -472,6 +553,7 @@ def cache_key(entries: Iterable[DecklistEntry], aesthetic_ids: tuple[str, ...],
     else:
         ps_repr = ",".join(printing_strategy)
     h.update(f"|sb={include_sideboard}|basics={include_basics}|ps={ps_repr}|v={data_version}".encode())
+    h.update(f"|tl={allow_non_tournament}|ds={','.join(sorted(disabled_sets))}|dg={allow_digital}".encode())
     return h.hexdigest()
 
 
@@ -505,6 +587,9 @@ def analyze_cached(
     include_sideboard: bool,
     include_basics: bool,
     printing_strategy: list[str] | str | None = None,
+    allow_non_tournament: bool = True,
+    disabled_sets: list[str] | None = None,
+    allow_digital: bool = False,
 ) -> dict:
     aid_tuple = tuple(a.id for a in aesthetics)
     dv = db.get_meta("scryfall_updated_at") or ""
@@ -512,11 +597,15 @@ def analyze_cached(
         ps_for_key: tuple[str, ...] | str | None = tuple(printing_strategy)
     else:
         ps_for_key = printing_strategy
-    key = cache_key(entries, aid_tuple, include_sideboard, include_basics, ps_for_key, dv)
+    ds_tuple = tuple(disabled_sets or ())
+    key = cache_key(entries, aid_tuple, include_sideboard, include_basics,
+                    ps_for_key, dv, allow_non_tournament, ds_tuple, allow_digital)
     cached = _RESULT_CACHE.get(key)
     if cached is not None:
         return cached
-    result = analyze(entries, aesthetics, include_sideboard, include_basics, printing_strategy)
+    result = analyze(entries, aesthetics, include_sideboard, include_basics,
+                     printing_strategy, allow_non_tournament, list(ds_tuple),
+                     allow_digital)
     if len(_RESULT_CACHE) > 128:
         _RESULT_CACHE.pop(next(iter(_RESULT_CACHE)))
     _RESULT_CACHE[key] = result

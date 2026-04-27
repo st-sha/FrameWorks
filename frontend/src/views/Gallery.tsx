@@ -112,20 +112,11 @@ export function GalleryView() {
     setHover(null);
   };
 
-  // Dismiss the pinned popover when the user clicks anywhere outside it
-  // (the popover itself stops propagation, so clicks inside don't trigger).
-  useEffect(() => {
-    if (!pinned) return;
-    const onDocClick = () => closePopover();
-    // Defer one tick so the click that pinned us doesn't immediately unpin.
-    const t = window.setTimeout(() => {
-      document.addEventListener('click', onDocClick);
-    }, 0);
-    return () => {
-      window.clearTimeout(t);
-      document.removeEventListener('click', onDocClick);
-    };
-  }, [pinned]);
+  // Pinned popovers are intentionally STICKY: only the explicit X button
+  // (or Esc) dismisses them. We used to auto-close on any document
+  // click, but that prevented the user from interacting with the
+  // popover itself — scrolling the alternates strip, opening printing
+  // links, etc. now all work without accidentally dismissing.
 
   return (
     <>
@@ -279,7 +270,10 @@ export function GalleryView() {
 }
 
 /** Caption rendered beneath each Gallery card: card name, set symbol + set
- *  name. Symbol is the official Scryfall set SVG. */
+ *  name. Symbol URL is taken from the /api/sets index (which mirrors
+ *  Scryfall's per-set `icon_svg_uri`) — some sets like h2r reuse a parent
+ *  set's SVG, so a bare /sets/{code}.svg path 404s. We fall back to that
+ *  bare path when the index hasn't loaded yet. */
 function CardCaption({
   name,
   printing,
@@ -289,9 +283,12 @@ function CardCaption({
   printing: PerCardExample | null | undefined;
   unresolved?: boolean;
 }) {
+  const setIcons = useStore((s) => s.setIcons);
   const setCode = printing?.set?.toLowerCase() ?? null;
   const setName = printing?.set_name ?? null;
-  const symbolUrl = setCode ? `https://svgs.scryfall.io/sets/${setCode}.svg` : null;
+  const symbolUrl = setCode
+    ? setIcons[setCode] ?? `https://svgs.scryfall.io/sets/${setCode}.svg`
+    : null;
   return (
     <div className={'card-caption' + (unresolved ? ' unresolved' : '')}>
       <div className="cc-line" title={setName ? `${name} · ${setName}` : name}>
@@ -491,16 +488,13 @@ function PrintingsPopover({
           {printings ? `${printings.length} printing${printings.length === 1 ? '' : 's'}` : '…'}
         </span>
         {pinned && (
-          <>
-            <span className="pp-pinned" title="Popover pinned — click outside or press Esc to dismiss" aria-label="Pinned">📌</span>
-            <button
-              type="button"
-              className="pp-close"
-              onClick={onClose}
-              aria-label="Close pinned popover"
-              title="Close (Esc)"
-            >×</button>
-          </>
+          <button
+            type="button"
+            className="pp-close"
+            onClick={onClose}
+            aria-label="Close pinned popover"
+            title="Close (Esc)"
+          >×</button>
         )}
       </div>
 
@@ -513,6 +507,11 @@ function PrintingsPopover({
             title={`${featured.set?.toUpperCase() ?? ''} ${featured.collector_number ?? ''}${featured.released_at ? ` · ${featured.released_at.slice(0, 10)}` : ''}${featured.price_usd != null ? ` · $${featured.price_usd.toFixed(2)}` : ''}`}
           >
             <img src={featured.image_normal ?? ''} alt="" draggable={false} />
+            {featured.is_tournament_legal === false && (
+              <div className="not-legal-overlay" aria-hidden>
+                <span className="not-legal-band">Not tournament legal</span>
+              </div>
+            )}
           </a>
         ) : (
           <div className="pp-featured-skel skeleton" />
@@ -549,6 +548,9 @@ function PrintingsPopover({
             >
               <img src={p.image_normal ?? ''} alt="" loading="lazy" draggable={false} />
               <span className="pp-strip-rank">{i + 1}</span>
+              {p.is_tournament_legal === false && (
+                <span className="pp-strip-illegal" title="Not tournament legal" aria-hidden>!</span>
+              )}
             </button>
           ) : (
             <div key={`sk-${i}`} className="pp-strip-cell skeleton" />
