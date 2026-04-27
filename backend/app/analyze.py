@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections import defaultdict
+import threading
+from collections import OrderedDict, defaultdict
 from functools import lru_cache
 from typing import Iterable
 
@@ -57,14 +58,34 @@ def _is_tournament_legal(p: dict) -> bool:
 
 
 def _resolve_names(entries: list[DecklistEntry]) -> tuple[dict[str, str], list[str]]:
-    """Map normalized name -> oracle_id. Returns (resolved, unresolved_names)."""
+    """Map normalized name -> oracle_id. Returns (resolved, unresolved_names).
+
+    Excludes non-game printings (tokens, emblems, art-series) so that a
+    decklist entry like "Tarmogoyf" never resolves to the Tarmogoyf
+    *token* oracle_id (which Scryfall's `default_cards` bulk includes
+    alongside the real creature). Filtering on `printings.layout` rather
+    than `cards.layout` works on un-refreshed DBs from before the oracle
+    columns were added.
+    """
     if not entries:
         return {}, []
     names_norm = sorted({db.normalize_name(e.name) for e in entries if e.name})
     placeholders = ", ".join(["?"] * len(names_norm))
     with db.read_lock() as c:
         rows = c.execute(
-            f"SELECT name_normalized, oracle_id FROM cards WHERE name_normalized IN ({placeholders})",
+            f"""
+            SELECT DISTINCT c.name_normalized, c.oracle_id
+            FROM cards c
+            WHERE c.name_normalized IN ({placeholders})
+              AND EXISTS (
+                  SELECT 1 FROM printings p
+                  WHERE p.oracle_id = c.oracle_id
+                    AND COALESCE(p.layout, '') NOT IN (
+                        'token', 'double_faced_token', 'emblem', 'art_series'
+                    )
+                    AND COALESCE(p.set_type, '') != 'token'
+              )
+            """,
             names_norm,
         ).fetchall()
     resolved = {row[0]: row[1] for row in rows}
@@ -74,15 +95,85 @@ def _resolve_names(entries: list[DecklistEntry]) -> tuple[dict[str, str], list[s
     if missing:
         with db.read_lock() as c:
             for nm in list(missing):
+                # Escape LIKE wildcards in card names; otherwise an entry
+                # like `Smelt_` or `Mind%Bend` would match unintended rows.
+                esc = nm.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
                 row = c.execute(
-                    "SELECT oracle_id FROM cards WHERE name_normalized LIKE ? LIMIT 1",
-                    [f"{nm} // %"],
+                    """
+                    SELECT c.oracle_id FROM cards c
+                    WHERE c.name_normalized LIKE ? ESCAPE '\\'
+                      AND EXISTS (
+                          SELECT 1 FROM printings p
+                          WHERE p.oracle_id = c.oracle_id
+                            AND COALESCE(p.layout, '') NOT IN (
+                                'token', 'double_faced_token', 'emblem', 'art_series'
+                            )
+                            AND COALESCE(p.set_type, '') != 'token'
+                      )
+                    LIMIT 1
+                    """,
+                    [f"{esc} // %"],
                 ).fetchone()
                 if row:
                     resolved[nm] = row[0]
                     missing.remove(nm)
 
     return resolved, missing
+
+
+# Oracle-level gameplay fields surfaced on PerCardRow so the frontend
+# Scryfall-syntax filter can match `t:`, `o:`, `c:`, `mv:`, `pow:`, etc.
+# Order matches the SELECT in `_fetch_oracle_data` exactly.
+_ORACLE_FIELDS: tuple[str, ...] = (
+    "type_line", "oracle_text", "mana_cost", "cmc",
+    "colors", "color_identity",
+    "power", "toughness", "loyalty", "defense",
+    "rarity", "keywords", "produced_mana", "layout",
+)
+
+
+def _fetch_oracle_data(oracle_ids: list[str]) -> dict[str, dict]:
+    """Bulk-fetch oracle-level gameplay fields for a set of oracle_ids.
+
+    Returns `{oracle_id: {field: value, ...}}`. Missing oracles or NULL
+    columns are silently omitted; the frontend evaluator treats absence
+    as "predicate doesn't match" rather than erroring.
+
+    The set of columns SELECTed is intersected with the live `cards`
+    table schema so an un-migrated DB (older bulk data, or a unit-test
+    fixture that constructs `cards` by hand) still works — predicates
+    that need the missing columns simply won't match.
+    """
+    if not oracle_ids:
+        return {}
+    with db.read_lock() as c:
+        existing = {
+            row[0]
+            for row in c.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'cards'"
+            ).fetchall()
+        }
+        present = [f for f in _ORACLE_FIELDS if f in existing]
+        if not present:
+            return {}
+        placeholders = ", ".join(["?"] * len(oracle_ids))
+        cols = ", ".join(present)
+        rows = c.execute(
+            f"SELECT oracle_id, {cols} FROM cards WHERE oracle_id IN ({placeholders})",
+            list(oracle_ids),
+        ).fetchall()
+    out: dict[str, dict] = {}
+    for row in rows:
+        oid = row[0]
+        d: dict = {}
+        for i, name in enumerate(present, start=1):
+            v = row[i]
+            if v is None:
+                continue
+            d[name] = v
+        out[oid] = d
+    return out
 
 
 # Per-strategy SQL fragment that contributes ONE primary sort key. Multiple
@@ -201,7 +292,96 @@ def _printing_to_example(p: dict) -> dict:
         "released_at": p["released_at"],
         "frame": p["frame"],
         "is_tournament_legal": _is_tournament_legal(p),
+        # Printing-aesthetic fields surfaced so the frontend
+        # Scryfall-syntax filter can evaluate `border:`, `is:foil`,
+        # `is:promo`, `is:fullart`, `is:textless`, `is:digital`,
+        # `lang:`, `stamp:` against the chosen default printing.
+        "border_color": p.get("border_color"),
+        "full_art": p.get("full_art"),
+        "textless": p.get("textless"),
+        "promo": p.get("promo"),
+        "digital": p.get("digital"),
+        "lang": p.get("lang"),
+        "nonfoil": p.get("nonfoil"),
+        "foil": p.get("foil"),
+        "security_stamp": p.get("security_stamp"),
+        "set_type": p.get("set_type"),
+        "frame_effects": p.get("frame_effects"),
+        "promo_types": p.get("promo_types"),
     }
+
+
+def _row_to_printing(row: tuple) -> dict:
+    """Materialize one DuckDB printings row tuple into the dict shape
+    used throughout analyze(). Centralized so the main path and the
+    legality-rescue fallback can't silently drift out of sync."""
+    (oid, set_code, set_name, cn, img, art, price, released, frame,
+     border, frame_effects, full_art, textless, promo, promo_types,
+     digital, lang, layout, sec_stamp, set_type, nonfoil, foil,
+     tournament_legal,
+     legal_standard, legal_pioneer, legal_modern, legal_legacy,
+     legal_vintage, legal_commander, legal_pauper) = row
+    return {
+        "oracle_id": oid,
+        "set": set_code,
+        "set_name": set_name,
+        "collector_number": cn,
+        "image_normal": img,
+        "image_art_crop": art,
+        "price_usd": float(price) if price is not None else None,
+        "released_at": released.isoformat() if released is not None else None,
+        "frame": frame,
+        "border_color": border,
+        "frame_effects": frame_effects,
+        "full_art": full_art,
+        "textless": textless,
+        "promo": promo,
+        "promo_types": promo_types,
+        "digital": digital,
+        "lang": lang,
+        "layout": layout,
+        "security_stamp": sec_stamp,
+        "set_type": set_type,
+        "nonfoil": nonfoil,
+        "foil": foil,
+        "tournament_legal": tournament_legal,
+        "legal_standard": legal_standard,
+        "legal_pioneer": legal_pioneer,
+        "legal_modern": legal_modern,
+        "legal_legacy": legal_legacy,
+        "legal_vintage": legal_vintage,
+        "legal_commander": legal_commander,
+        "legal_pauper": legal_pauper,
+    }
+
+
+# Format ids accepted by the `format` parameter. Each maps to the column
+# name on `printings` that holds per-printing legality for that format.
+FORMAT_COLUMN: dict[str, str] = {
+    "standard": "legal_standard",
+    "pioneer": "legal_pioneer",
+    "modern": "legal_modern",
+    "legacy": "legal_legacy",
+    "vintage": "legal_vintage",
+    "commander": "legal_commander",
+    "pauper": "legal_pauper",
+}
+
+
+def _printing_legal_in_format(p: dict, fmt: str | None) -> bool:
+    """Return True if the printing is legal in the requested format.
+    Unknown / null format passes everything through (no extra filter).
+    A missing per-format column is treated as legal so an un-refreshed
+    DB doesn't silently empty the pool when the user picks a format."""
+    if not fmt:
+        return True
+    col = FORMAT_COLUMN.get(fmt)
+    if col is None:
+        return True
+    val = p.get(col)
+    if val is None:
+        return True
+    return bool(val)
 
 
 def _python_sort_keys(printing_strategy: list[str] | str | None):
@@ -292,7 +472,14 @@ def analyze(
     allow_non_tournament: bool = True,
     disabled_sets: list[str] | None = None,
     allow_digital: bool = False,
+    format: str | None = None,
 ) -> dict:
+    # "Cube" is a meta-format: any printing of any card may legally appear
+    # in a cube, including silver-border / gold-border / 30A / acorn /
+    # memorabilia products. Force the tournament-legality filter off so
+    # the default printing pool isn't artificially shrunk.
+    if format == "cube":
+        allow_non_tournament = True
     # Filter
     filtered: list[DecklistEntry] = []
     for e in entries:
@@ -349,7 +536,10 @@ def analyze(
                        released_at, frame, border_color, frame_effects,
                        full_art, textless, promo, promo_types, digital,
                        lang, layout, security_stamp, set_type,
-                       nonfoil, foil, tournament_legal
+                       nonfoil, foil, tournament_legal,
+                       legal_standard, legal_pioneer, legal_modern,
+                       legal_legacy, legal_vintage, legal_commander,
+                       legal_pauper
                 FROM printings
                 WHERE oracle_id IN ({oracle_placeholders})
                   AND image_normal IS NOT NULL
@@ -364,42 +554,59 @@ def analyze(
         disabled_set_codes = set(disabled_sets or [])
         printings_by_oracle: dict[str, list[dict]] = defaultdict(list)
         for row in all_rows:
-            (oid, set_code, set_name, cn, img, art, price, released, frame,
-             border, frame_effects, full_art, textless, promo, promo_types,
-             digital, lang, layout, sec_stamp, set_type, nonfoil, foil,
-             tournament_legal) = row
-            p = {
-                "oracle_id": oid,
-                "set": set_code,
-                "set_name": set_name,
-                "collector_number": cn,
-                "image_normal": img,
-                "image_art_crop": art,
-                "price_usd": float(price) if price is not None else None,
-                "released_at": released.isoformat() if released is not None else None,
-                "frame": frame,
-                "border_color": border,
-                "frame_effects": frame_effects,
-                "full_art": full_art,
-                "textless": textless,
-                "promo": promo,
-                "promo_types": promo_types,
-                "digital": digital,
-                "lang": lang,
-                "layout": layout,
-                "security_stamp": sec_stamp,
-                "set_type": set_type,
-                "nonfoil": nonfoil,
-                "foil": foil,
-                "tournament_legal": tournament_legal,
-            }
+            p = _row_to_printing(row)
+            set_code = p["set"]
+            oid = p["oracle_id"]
             if set_code in disabled_set_codes:
                 continue
             if not allow_non_tournament and not _is_tournament_legal(p):
                 continue
             if not allow_digital and p.get("digital"):
                 continue
+            if not _printing_legal_in_format(p, format):
+                continue
             printings_by_oracle[oid].append(p)
+
+        # Graceful fallback: if the legality / digital filters above
+        # eliminated *every* printing of a card (e.g. Blast from the
+        # Past has only silver-border Unhinged printings), restore the
+        # full unfiltered pool for that oracle so the deck row still
+        # has an image to display. The non-legal printings will still
+        # render the diagonal "Not tournament legal" overlay, but the
+        # card won't silently vanish from the user's deck.
+        #
+        # IMPORTANT: this rescue is skipped when the user has explicitly
+        # selected a `format`. In that case "no legal printing" is the
+        # whole point of the filter — silently re-adding the card would
+        # make the format dropdown appear to do nothing. Instead we
+        # leave the card with no `default` printing and surface a
+        # warning so the UI can call out "X is not legal in <format>".
+        rescued_oracles: set[str] = set()
+        format_blocked: set[str] = set()
+        for oid in oracle_ids:
+            if oid not in printings_by_oracle or not printings_by_oracle[oid]:
+                if format:
+                    format_blocked.add(oid)
+                else:
+                    rescued_oracles.add(oid)
+        if rescued_oracles:
+            for row in all_rows:
+                oid = row[0]
+                set_code = row[1]
+                if oid not in rescued_oracles:
+                    continue
+                if set_code in disabled_set_codes:
+                    continue
+                printings_by_oracle[oid].append(_row_to_printing(row))
+        if format_blocked:
+            # Map oracle_id -> display name for the warning text.
+            blocked_names = sorted(
+                {display_name.get(n, n)
+                 for n, oid in norm_to_oracle.items()
+                 if oid in format_blocked}
+            )
+            for nm in blocked_names:
+                warnings.append(f"Not legal in {format}: {nm}")
 
         # Sort each oracle's printings by the user-requested preference
         # using the equivalent Python sort keys.
@@ -425,14 +632,21 @@ def analyze(
                 sat = printing_satisfies.get(key)
                 if sat is None:
                     cache_key2 = (key[0], key[1], ver)
-                    sat = _PRINTING_SATISFIES_CACHE.get(cache_key2)
+                    with _PRINTING_SATISFIES_LOCK:
+                        sat = _PRINTING_SATISFIES_CACHE.get(cache_key2)
+                        if sat is not None:
+                            _PRINTING_SATISFIES_CACHE.move_to_end(cache_key2)
                     if sat is None:
                         sat = set()
                         for ae in aesthetics:
                             fn = ae.match_py
                             if fn is not None and fn(p):
                                 sat.add(ae.id)
-                        _PRINTING_SATISFIES_CACHE[cache_key2] = sat
+                        with _PRINTING_SATISFIES_LOCK:
+                            _PRINTING_SATISFIES_CACHE[cache_key2] = sat
+                            _PRINTING_SATISFIES_CACHE.move_to_end(cache_key2)
+                            while len(_PRINTING_SATISFIES_CACHE) > _PRINTING_SATISFIES_MAX:
+                                _PRINTING_SATISFIES_CACHE.popitem(last=False)
                     printing_satisfies[key] = sat
                 # Track availability + best example per aesthetic. plist is
                 # already sorted by preference, so the first matching entry
@@ -468,17 +682,22 @@ def analyze(
     total_unique = len(qty_by_norm)
     total_qty = sum(qty_by_norm.values())
 
-    # Summary rows
+    # Summary rows. Avoid an O(aesthetics × cards) inner loop by
+    # precomputing qty per oracle_id once, then iterating each
+    # aesthetic's available oid set directly (typically a fraction of
+    # the full deck).
+    qty_by_oid: dict[str, int] = defaultdict(int)
+    for n, q in qty_by_norm.items():
+        oid = norm_to_oracle.get(n)
+        if oid is not None:
+            qty_by_oid[oid] += q
     summary = []
     for ae in aesthetics:
         avail_oids = available_by_aesthetic[ae.id]
-        avail_unique = 0
+        avail_unique = len(avail_oids)
         avail_qty = 0
-        for n, q in qty_by_norm.items():
-            oid = norm_to_oracle.get(n)
-            if oid and oid in avail_oids:
-                avail_unique += 1
-                avail_qty += q
+        for oid in avail_oids:
+            avail_qty += qty_by_oid.get(oid, 0)
         coverage = (avail_qty / total_qty * 100.0) if total_qty else 0.0
         summary.append({
             "aesthetic_id": ae.id,
@@ -492,6 +711,7 @@ def analyze(
         })
 
     # Per-card rows
+    oracle_data = _fetch_oracle_data(list({oid for oid in norm_to_oracle.values() if oid}))
     per_card = []
     for n, q in sorted(qty_by_norm.items(), key=lambda kv: display_name.get(kv[0], kv[0])):
         oid = norm_to_oracle.get(n)
@@ -505,7 +725,7 @@ def analyze(
                     examples[ae.id] = example_printing[ae.id][oid]
                 if oid in default_satisfies[ae.id]:
                     default_ids.append(ae.id)
-        per_card.append({
+        row: dict = {
             "name": display_name[n],
             "name_normalized": n,
             "qty": q,
@@ -520,7 +740,16 @@ def analyze(
             # that satisfy that aesthetic. Drives the Coverage view's
             # "N versions" cell badge.
             "version_counts": (version_counts.get(oid, {}) if oid else {}),
-        })
+        }
+        # Surface oracle-level gameplay fields (type_line, oracle_text,
+        # colors, mana_cost, cmc, pow/tou, rarity, keywords, …) so the
+        # frontend Scryfall-syntax filter can evaluate `t:`, `o:`,
+        # `c:`, `mv:`, `pow:`, `r:`, `kw:`, etc. Only present when the
+        # cards table has been populated by a Scryfall refresh that
+        # included these columns.
+        if oid and oid in oracle_data:
+            row.update(oracle_data[oid])
+        per_card.append(row)
 
     return {
         "summary": summary,
@@ -541,7 +770,8 @@ def cache_key(entries: Iterable[DecklistEntry], aesthetic_ids: tuple[str, ...],
               data_version: str | None,
               allow_non_tournament: bool,
               disabled_sets: tuple[str, ...],
-              allow_digital: bool) -> str:
+              allow_digital: bool,
+              format: str | None) -> str:
     h = hashlib.sha256()
     for e in sorted(entries, key=lambda x: (x.section, x.name, x.qty)):
         h.update(f"{e.section}|{e.qty}|{e.name}\n".encode())
@@ -553,7 +783,7 @@ def cache_key(entries: Iterable[DecklistEntry], aesthetic_ids: tuple[str, ...],
     else:
         ps_repr = ",".join(printing_strategy)
     h.update(f"|sb={include_sideboard}|basics={include_basics}|ps={ps_repr}|v={data_version}".encode())
-    h.update(f"|tl={allow_non_tournament}|ds={','.join(sorted(disabled_sets))}|dg={allow_digital}".encode())
+    h.update(f"|tl={allow_non_tournament}|ds={','.join(sorted(disabled_sets))}|dg={allow_digital}|fmt={format or ''}".encode())
     return h.hexdigest()
 
 
@@ -562,14 +792,18 @@ def _cached_analyze_internal(key: str, payload_repr: str) -> dict:  # pragma: no
     raise RuntimeError("Use analyze_cached -- this is a placeholder for typing only.")
 
 
-_RESULT_CACHE: dict[str, dict] = {}
+_RESULT_CACHE: "OrderedDict[str, dict]" = OrderedDict()
+_RESULT_CACHE_LOCK = threading.Lock()
+_RESULT_CACHE_MAX = 128
 
 # Cross-request cache for "which aesthetics does this printing satisfy?".
 # Keyed by (set, collector_number, aesthetics-version-token). The token is
 # included so that a ruleset reload safely invalidates the cache.
 # Survives across analyze() calls so back-to-back imports of similar
 # decks (commander variants, sideboard tweaks, etc.) share work.
-_PRINTING_SATISFIES_CACHE: dict[tuple[str, str, int], set[str]] = {}
+_PRINTING_SATISFIES_CACHE: "OrderedDict[tuple[str, str, int], set[str]]" = OrderedDict()
+_PRINTING_SATISFIES_LOCK = threading.Lock()
+_PRINTING_SATISFIES_MAX = 50_000
 _AESTHETICS_VERSION = 0
 
 
@@ -577,8 +811,12 @@ def bump_aesthetics_version() -> None:
     """Invalidate the printing-satisfies cross-request cache. Call when
     rulesets are reloaded or replaced."""
     global _AESTHETICS_VERSION
-    _AESTHETICS_VERSION += 1
-    _PRINTING_SATISFIES_CACHE.clear()
+    with _PRINTING_SATISFIES_LOCK:
+        _AESTHETICS_VERSION += 1
+        _PRINTING_SATISFIES_CACHE.clear()
+    # Aesthetic predicates changed -> result cache is stale too.
+    with _RESULT_CACHE_LOCK:
+        _RESULT_CACHE.clear()
 
 
 def analyze_cached(
@@ -590,6 +828,7 @@ def analyze_cached(
     allow_non_tournament: bool = True,
     disabled_sets: list[str] | None = None,
     allow_digital: bool = False,
+    format: str | None = None,
 ) -> dict:
     aid_tuple = tuple(a.id for a in aesthetics)
     dv = db.get_meta("scryfall_updated_at") or ""
@@ -599,23 +838,30 @@ def analyze_cached(
         ps_for_key = printing_strategy
     ds_tuple = tuple(disabled_sets or ())
     key = cache_key(entries, aid_tuple, include_sideboard, include_basics,
-                    ps_for_key, dv, allow_non_tournament, ds_tuple, allow_digital)
-    cached = _RESULT_CACHE.get(key)
-    if cached is not None:
-        return cached
+                    ps_for_key, dv, allow_non_tournament, ds_tuple, allow_digital,
+                    format)
+    with _RESULT_CACHE_LOCK:
+        cached = _RESULT_CACHE.get(key)
+        if cached is not None:
+            _RESULT_CACHE.move_to_end(key)
+            return cached
     result = analyze(entries, aesthetics, include_sideboard, include_basics,
                      printing_strategy, allow_non_tournament, list(ds_tuple),
-                     allow_digital)
-    if len(_RESULT_CACHE) > 128:
-        _RESULT_CACHE.pop(next(iter(_RESULT_CACHE)))
-    _RESULT_CACHE[key] = result
+                     allow_digital, format)
+    with _RESULT_CACHE_LOCK:
+        _RESULT_CACHE[key] = result
+        _RESULT_CACHE.move_to_end(key)
+        while len(_RESULT_CACHE) > _RESULT_CACHE_MAX:
+            _RESULT_CACHE.popitem(last=False)
     return result
 
 
 def clear_cache() -> None:
-    _RESULT_CACHE.clear()
+    with _RESULT_CACHE_LOCK:
+        _RESULT_CACHE.clear()
     # The printing-satisfies cache is keyed by aesthetics version, so we
     # don't need to clear it on every analyze() invalidation — but we do
     # need to clear it on a Scryfall data refresh because the same
     # (set, cn) may now refer to different printing data.
-    _PRINTING_SATISFIES_CACHE.clear()
+    with _PRINTING_SATISFIES_LOCK:
+        _PRINTING_SATISFIES_CACHE.clear()

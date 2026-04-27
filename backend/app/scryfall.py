@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import threading
 from pathlib import Path
 
 import duckdb
@@ -15,6 +16,12 @@ log = logging.getLogger(__name__)
 
 BULK_INDEX_URL = "https://api.scryfall.com/bulk-data"
 SETS_INDEX_URL = "https://api.scryfall.com/sets"
+
+# Serializes refresh() calls so concurrent invocations (manual + scheduled)
+# don't double-download or interleave ingest writes. Module-scoped so it
+# spans the whole process; refresh() is short-lived enough that fairness
+# / re-entrance aren't concerns.
+_REFRESH_LOCK = threading.Lock()
 
 
 class ScryfallClient:
@@ -48,7 +55,10 @@ class ScryfallClient:
 
     def download(self, url: str, dest: Path) -> None:
         tmp = dest.with_suffix(dest.suffix + ".tmp")
-        with httpx.Client(headers=self._headers, timeout=None) as client:
+        # Cap the bulk download at 1 hour. The default `None` lets a
+        # wedged TCP connection stall the refresh forever, blocking
+        # subsequent scheduled refreshes.
+        with httpx.Client(headers=self._headers, timeout=httpx.Timeout(3600.0, connect=30.0)) as client:
             with client.stream("GET", url) as r:
                 r.raise_for_status()
                 with tmp.open("wb") as f:
@@ -107,10 +117,16 @@ def _ingest_into_temp(c: duckdb.DuckDBPyConnection, json_path: Path) -> None:
             security_stamp,
             set_type,
             -- A printing is tournament-legal iff BOTH:
-            --   (a) the card's NAME is legal/restricted in some standard
-            --       format per Scryfall's `legalities` map (oracle-level
-            --       — every reprint of Lightning Bolt qualifies even from
-            --       gold-border WC sets), AND
+            --   (a) the card's NAME is recognized in some standard format
+            --       per Scryfall's `legalities` map. We accept ANY status
+            --       except 'not_legal' \u2014 'legal', 'restricted', AND
+            --       'banned' all signal "this is a real card with a
+            --       known format presence." A banned card (e.g. Crusade,
+            --       banned in Legacy/Vintage/Commander) is still a
+            --       legitimate paper card; it's just currently disallowed,
+            --       not a joke / un-set / collectors-only printing. Only
+            --       acorn-stamp un-cards and similar oddities get
+            --       'not_legal' across every format.
             --   (b) THIS specific printing is on a tournament-acceptable
             --       substrate: not silver/gold border, not 30A reproduction,
             --       not memorabilia set_type, not an acorn-stamped Unfinity
@@ -120,28 +136,129 @@ def _ingest_into_temp(c: duckdb.DuckDBPyConnection, json_path: Path) -> None:
             -- (b) alone marks Embiggen as illegal because Unfinity is
             -- set_type='funny', even though the printing is Vintage-legal.
             ((
-                legalities.standard  IN ('legal','restricted')
-             OR legalities.pioneer   IN ('legal','restricted')
-             OR legalities.modern    IN ('legal','restricted')
-             OR legalities.legacy    IN ('legal','restricted')
-             OR legalities.vintage   IN ('legal','restricted')
-             OR legalities.commander IN ('legal','restricted')
-             OR legalities.pauper    IN ('legal','restricted')
-             OR legalities.duel      IN ('legal','restricted')
-             OR legalities.brawl     IN ('legal','restricted')
-             OR legalities.oathbreaker IN ('legal','restricted')
+                COALESCE(legalities.standard,    'not_legal') != 'not_legal'
+             OR COALESCE(legalities.pioneer,     'not_legal') != 'not_legal'
+             OR COALESCE(legalities.modern,      'not_legal') != 'not_legal'
+             OR COALESCE(legalities.legacy,      'not_legal') != 'not_legal'
+             OR COALESCE(legalities.vintage,     'not_legal') != 'not_legal'
+             OR COALESCE(legalities.commander,   'not_legal') != 'not_legal'
+             OR COALESCE(legalities.pauper,      'not_legal') != 'not_legal'
+             OR COALESCE(legalities.duel,        'not_legal') != 'not_legal'
+             OR COALESCE(legalities.brawl,       'not_legal') != 'not_legal'
+             OR COALESCE(legalities.oathbreaker, 'not_legal') != 'not_legal'
+             OR COALESCE(legalities.premodern,   'not_legal') != 'not_legal'
+             OR COALESCE(legalities.oldschool,   'not_legal') != 'not_legal'
             )
             AND COALESCE(border_color, '') NOT IN ('silver', 'gold')
             AND COALESCE(set_type, '') != 'memorabilia'
             AND COALESCE(security_stamp, '') != 'acorn'
-            AND "set" NOT IN ('30a', '30c')) AS tournament_legal
+            AND "set" NOT IN ('30a', '30c')) AS tournament_legal,
+            -- Per-format legality bits. A printing is legal in a format iff
+            --   (a) the card name has status 'legal' or 'restricted' in
+            --       Scryfall's `legalities` map for that format
+            --       (banned cards are NOT legal for tournament play, so
+            --       they are excluded here), AND
+            --   (b) the substrate filter above passes (no silver/gold
+            --       border, no memorabilia, no acorn, no 30A).
+            -- The substrate clause is repeated rather than factored to a
+            -- CTE so DuckDB can keep this as a single-pass projection.
+            (COALESCE(legalities.standard, 'not_legal') IN ('legal', 'restricted')
+             AND COALESCE(border_color, '') NOT IN ('silver', 'gold')
+             AND COALESCE(set_type, '') != 'memorabilia'
+             AND COALESCE(security_stamp, '') != 'acorn'
+             AND "set" NOT IN ('30a', '30c')) AS legal_standard,
+            (COALESCE(legalities.pioneer, 'not_legal') IN ('legal', 'restricted')
+             AND COALESCE(border_color, '') NOT IN ('silver', 'gold')
+             AND COALESCE(set_type, '') != 'memorabilia'
+             AND COALESCE(security_stamp, '') != 'acorn'
+             AND "set" NOT IN ('30a', '30c')) AS legal_pioneer,
+            (COALESCE(legalities.modern, 'not_legal') IN ('legal', 'restricted')
+             AND COALESCE(border_color, '') NOT IN ('silver', 'gold')
+             AND COALESCE(set_type, '') != 'memorabilia'
+             AND COALESCE(security_stamp, '') != 'acorn'
+             AND "set" NOT IN ('30a', '30c')) AS legal_modern,
+            (COALESCE(legalities.legacy, 'not_legal') IN ('legal', 'restricted')
+             AND COALESCE(border_color, '') NOT IN ('silver', 'gold')
+             AND COALESCE(set_type, '') != 'memorabilia'
+             AND COALESCE(security_stamp, '') != 'acorn'
+             AND "set" NOT IN ('30a', '30c')) AS legal_legacy,
+            (COALESCE(legalities.vintage, 'not_legal') IN ('legal', 'restricted')
+             AND COALESCE(border_color, '') NOT IN ('silver', 'gold')
+             AND COALESCE(set_type, '') != 'memorabilia'
+             AND COALESCE(security_stamp, '') != 'acorn'
+             AND "set" NOT IN ('30a', '30c')) AS legal_vintage,
+            (COALESCE(legalities.commander, 'not_legal') IN ('legal', 'restricted')
+             AND COALESCE(border_color, '') NOT IN ('silver', 'gold')
+             AND COALESCE(set_type, '') != 'memorabilia'
+             AND COALESCE(security_stamp, '') != 'acorn'
+             AND "set" NOT IN ('30a', '30c')) AS legal_commander,
+            (COALESCE(legalities.pauper, 'not_legal') IN ('legal', 'restricted')
+             AND COALESCE(border_color, '') NOT IN ('silver', 'gold')
+             AND COALESCE(set_type, '') != 'memorabilia'
+             AND COALESCE(security_stamp, '') != 'acorn'
+             AND "set" NOT IN ('30a', '30c')) AS legal_pauper,
+            -- Oracle-level gameplay fields. Selected per-printing here as
+            -- staging columns (prefixed `_`) so the cards_new GROUP BY
+            -- below can pluck ANY_VALUE per oracle_id; they are dropped
+            -- from the runtime `printings` table after the swap so the
+            -- printings shape stays narrow. DFC / split / adventure cards
+            -- store gameplay data on `card_faces[]` rather than the top
+            -- level — fall back to a face-aware concat so `t:`, `o:`,
+            -- `c:`, `mv:` queries still match either face.
+            COALESCE(
+                type_line,
+                array_to_string(
+                    list_transform(card_faces, x -> COALESCE(x.type_line, '')),
+                    ' // '
+                )
+            ) AS _type_line,
+            COALESCE(
+                oracle_text,
+                array_to_string(
+                    list_transform(card_faces, x -> COALESCE(x.oracle_text, '')),
+                    chr(10) || '//' || chr(10)
+                )
+            ) AS _oracle_text,
+            COALESCE(
+                mana_cost,
+                array_to_string(
+                    list_transform(card_faces, x -> COALESCE(x.mana_cost, '')),
+                    ' // '
+                )
+            ) AS _mana_cost,
+            TRY_CAST(cmc AS DOUBLE) AS _cmc,
+            COALESCE(
+                colors,
+                card_faces[1].colors,
+                []::VARCHAR[]
+            ) AS _colors,
+            COALESCE(color_identity, []::VARCHAR[]) AS _color_identity,
+            COALESCE(power,    card_faces[1].power)    AS _power,
+            COALESCE(toughness, card_faces[1].toughness) AS _toughness,
+            COALESCE(loyalty,  card_faces[1].loyalty)  AS _loyalty,
+            COALESCE(defense,  card_faces[1].defense)  AS _defense,
+            rarity,
+            COALESCE(keywords, []::VARCHAR[]) AS _keywords,
+            COALESCE(produced_mana, []::VARCHAR[]) AS _produced_mana
         FROM read_json_auto(
             '{json_path.as_posix()}',
             format='array',
             maximum_object_size=33554432
         )
         WHERE oracle_id IS NOT NULL
-          AND name IS NOT NULL;
+          AND name IS NOT NULL
+          -- Exclude non-game pieces. Scryfall's `default_cards` bulk
+          -- includes tokens (e.g. a "Tarmogoyf" creature token created
+          -- by various cards) and emblems alongside real cards. They
+          -- share names with real cards and pollute name-based resolution
+          -- ("Tarmogoyf" the deck entry resolves to the token oracle_id
+          -- instead of the real creature). Art-series cards and the
+          -- "card" set type (which contains tokens/emblems) are also
+          -- never legitimate decklist entries.
+          AND COALESCE(layout, '') NOT IN (
+              'token', 'double_faced_token', 'emblem', 'art_series'
+          )
+          AND COALESCE(set_type, '') != 'token';
         """
     )
 
@@ -149,13 +266,36 @@ def _ingest_into_temp(c: duckdb.DuckDBPyConnection, json_path: Path) -> None:
         """
         CREATE TABLE cards_new AS
         SELECT
-            oracle_id,
-            ANY_VALUE(name) AS name,
-            ANY_VALUE(name_normalized) AS name_normalized
-        FROM printings_new
-        GROUP BY oracle_id;
+            p.oracle_id,
+            ANY_VALUE(p.name) AS name,
+            ANY_VALUE(p.name_normalized) AS name_normalized,
+            ANY_VALUE(p._type_line)      AS type_line,
+            ANY_VALUE(p._oracle_text)    AS oracle_text,
+            ANY_VALUE(p._mana_cost)      AS mana_cost,
+            ANY_VALUE(p._cmc)            AS cmc,
+            ANY_VALUE(p._colors)         AS colors,
+            ANY_VALUE(p._color_identity) AS color_identity,
+            ANY_VALUE(p._power)          AS power,
+            ANY_VALUE(p._toughness)      AS toughness,
+            ANY_VALUE(p._loyalty)        AS loyalty,
+            ANY_VALUE(p._defense)        AS defense,
+            ANY_VALUE(p.rarity)          AS rarity,
+            ANY_VALUE(p._keywords)       AS keywords,
+            ANY_VALUE(p._produced_mana)  AS produced_mana,
+            ANY_VALUE(p.layout)          AS layout
+        FROM printings_new p
+        GROUP BY p.oracle_id;
         """
     )
+
+    # Drop the staging-only oracle columns so the runtime `printings`
+    # table keeps its narrow shape (these data live on `cards`).
+    for col in (
+        "_type_line", "_oracle_text", "_mana_cost", "_cmc", "_colors",
+        "_color_identity", "_power", "_toughness", "_loyalty", "_defense",
+        "_keywords", "_produced_mana", "rarity",
+    ):
+        c.execute(f"ALTER TABLE printings_new DROP COLUMN IF EXISTS {col};")
 
     # Atomic-ish swap (DuckDB DDL inside a transaction).
     c.execute("BEGIN TRANSACTION;")
@@ -174,41 +314,45 @@ def _ingest_into_temp(c: duckdb.DuckDBPyConnection, json_path: Path) -> None:
 
 def refresh(settings: Settings, force: bool = False) -> dict:
     """Check upstream, download if changed, ingest. Returns a status dict."""
-    client = ScryfallClient(settings.user_agent, settings.scryfall_bulk_type)
-    entry = client.get_bulk_entry()
-    upstream_updated = entry["updated_at"]
-    current = db.get_meta("scryfall_updated_at")
+    # Serialize concurrent refresh attempts (manual via /api/admin/refresh
+    # plus scheduled cron) so we don't double-download or interleave
+    # ingest writes.
+    with _REFRESH_LOCK:
+        client = ScryfallClient(settings.user_agent, settings.scryfall_bulk_type)
+        entry = client.get_bulk_entry()
+        upstream_updated = entry["updated_at"]
+        current = db.get_meta("scryfall_updated_at")
 
-    if not force and current == upstream_updated:
-        log.info("Scryfall data up-to-date (updated_at=%s)", upstream_updated)
-        return {"status": "skipped", "data_version": current}
+        if not force and current == upstream_updated:
+            log.info("Scryfall data up-to-date (updated_at=%s)", upstream_updated)
+            return {"status": "skipped", "data_version": current}
 
-    log.info(
-        "Refreshing Scryfall bulk %s (current=%s upstream=%s)",
-        settings.scryfall_bulk_type,
-        current,
-        upstream_updated,
-    )
-    cache = settings.bulk_cache_path
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    client.download(entry["download_uri"], cache)
+        log.info(
+            "Refreshing Scryfall bulk %s (current=%s upstream=%s)",
+            settings.scryfall_bulk_type,
+            current,
+            upstream_updated,
+        )
+        cache = settings.bulk_cache_path
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        client.download(entry["download_uri"], cache)
 
-    with db.write_lock() as c:
-        _ingest_into_temp(c, cache)
-        # Also fetch + ingest the /sets index so the UI can resolve each
-        # printing's set code to the correct Scryfall icon SVG (some sets
-        # like h2r reuse mh2's icon, etc.).
-        try:
-            sets_data = client.get_sets()
-            _ingest_sets(c, sets_data)
-        except Exception as e:  # pragma: no cover
-            log.warning("Failed to refresh /sets index: %s", e)
+        with db.write_lock() as c:
+            _ingest_into_temp(c, cache)
+            # Also fetch + ingest the /sets index so the UI can resolve each
+            # printing's set code to the correct Scryfall icon SVG (some sets
+            # like h2r reuse mh2's icon, etc.).
+            try:
+                sets_data = client.get_sets()
+                _ingest_sets(c, sets_data)
+            except Exception as e:  # pragma: no cover
+                log.warning("Failed to refresh /sets index: %s", e)
 
-    db.set_meta("scryfall_updated_at", upstream_updated)
-    db.set_meta("scryfall_bulk_type", settings.scryfall_bulk_type)
-    db.set_meta("scryfall_download_uri", entry["download_uri"])
-    log.info("Scryfall ingest complete (updated_at=%s)", upstream_updated)
-    return {"status": "refreshed", "data_version": upstream_updated}
+        db.set_meta("scryfall_updated_at", upstream_updated)
+        db.set_meta("scryfall_bulk_type", settings.scryfall_bulk_type)
+        db.set_meta("scryfall_download_uri", entry["download_uri"])
+        log.info("Scryfall ingest complete (updated_at=%s)", upstream_updated)
+        return {"status": "refreshed", "data_version": upstream_updated}
 
 
 def _ingest_sets(c: duckdb.DuckDBPyConnection, sets: list[dict]) -> None:

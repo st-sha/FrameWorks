@@ -31,7 +31,11 @@ def fresh_db(tmp_path: Path):
             price_usd DOUBLE,
             security_stamp VARCHAR, set_type VARCHAR,
             nonfoil BOOLEAN, foil BOOLEAN,
-            tournament_legal BOOLEAN
+            tournament_legal BOOLEAN,
+            legal_standard BOOLEAN, legal_pioneer BOOLEAN,
+            legal_modern BOOLEAN, legal_legacy BOOLEAN,
+            legal_vintage BOOLEAN, legal_commander BOOLEAN,
+            legal_pauper BOOLEAN
         );
         """
     )
@@ -63,7 +67,8 @@ def fresh_db(tmp_path: Path):
     ]
     c.executemany(
         """INSERT INTO printings VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, true, false, true
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, true, false, true,
+            true, true, true, true, true, true, true
         )""",
         rows,
     )
@@ -132,7 +137,8 @@ def test_borderless_predicate_matches_inverted_borderless_printing():
             'borderless', false, false, false, [], false, 'en', 'normal',
             'img-bos.png', 'art-bos.png', 50.0,
             NULL, NULL,
-            true, false, true
+            true, false, true,
+            true, true, true, true, true, true, true
         );"""
     )
     c.execute(

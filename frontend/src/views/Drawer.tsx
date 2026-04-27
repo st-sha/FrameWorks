@@ -14,6 +14,7 @@ export function Drawer() {
   const allowNonTournament = useStore((s) => s.allowNonTournament);
   const allowDigital = useStore((s) => s.allowDigital);
   const disabledSets = useStore((s) => s.disabledSets);
+  const format = useStore((s) => s.format);
 
   const [focusedPrintings, setFocusedPrintings] = useState<PrintingDetail[] | null>(null);
   const [focusedLoading, setFocusedLoading] = useState(false);
@@ -50,6 +51,7 @@ export function Drawer() {
         allow_non_tournament: allowNonTournament,
         allow_digital: allowDigital,
         disabled_sets: disabledSets,
+        format: format || undefined,
         limit: 500,
       })
       .then((r) => {
@@ -67,7 +69,7 @@ export function Drawer() {
     return () => {
       cancelled = true;
     };
-  }, [drawerId, drawerCardOracleId, drawerCardName, printingStrategy, allowNonTournament, allowDigital, disabledSets]);
+  }, [drawerId, drawerCardOracleId, drawerCardName, printingStrategy, allowNonTournament, allowDigital, disabledSets, format]);
 
   if (!drawerId || !result) return null;
   const ae = aesthetics.find((a) => a.id === drawerId);
@@ -121,7 +123,6 @@ export function Drawer() {
                   <MtgCard
                     key={`${p.set}-${p.collector_number}-${p.lang ?? ''}-${i}`}
                     name={drawerCardName}
-                    qty={i === 0 ? focusedCard?.qty : undefined}
                     printing={p}
                     showName={false}
                   />
@@ -137,7 +138,6 @@ export function Drawer() {
             <MtgCard
               key={c.name_normalized}
               name={c.name}
-              qty={c.qty}
               printing={c.examples[drawerId]}
               showName
             />
@@ -153,7 +153,6 @@ export function Drawer() {
                 <MtgCard
                   key={c.name_normalized}
                   name={c.name}
-                  qty={c.qty}
                   printing={c.default}
                   unavailable
                   showName

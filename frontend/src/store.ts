@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import { useMemo } from 'react';
 import type { Aesthetic, AnalyzeResponse, HealthResponse, PerCardRow, PrintingStrategy } from './api';
+import { buildMatcher } from './scryfallQuery';
 
 export type ViewMode =
   | 'gallery'
@@ -37,6 +38,13 @@ interface State {
    *  Alchemy). Most users care about physical cards so this is opt-in
    *  via the Settings page. */
   allowDigital: boolean;
+  /** Tournament format the deck/cube is targeting. When non-empty
+   *  (e.g. 'standard', 'modern', 'commander', 'pauper'), the printing
+   *  pool is restricted to printings legal in that format (legal +
+   *  restricted; banned cards are excluded). Empty string means "any
+   *  tournament format" — only the broader allowNonTournament toggle
+   *  applies. */
+  format: string;
   /** Per-set kill switch (set codes). Listed sets are dropped from the
    *  printing pool entirely — finer control than `allowNonTournament`. */
   disabledSets: string[];
@@ -69,6 +77,15 @@ interface State {
    *  "fall back to the data-driven default" (top spotlight, then highest
    *  coverage). */
   outliersTarget: string;
+  /** Free-text card-name filter applied to every card-showing view
+   *  (Gallery, Coverage, Art Grid). Cards whose name doesn't contain
+   *  this substring are hidden. Empty string = no filter. Persisted
+   *  across reloads via localStorage. */
+  cardNameFilter: string;
+  /** When true, the left navigation panel collapses to a slim strip with
+   *  just an expand-chevron, freeing up horizontal space for the main
+   *  content. Persisted across reloads. */
+  leftPanelCollapsed: boolean;
   /** Aesthetic groups collapsed in the Coverage view. */
   coverageCollapsedGroups: string[];
   /** Filter group names collapsed in the left sidebar (per-group toggle). */
@@ -100,6 +117,7 @@ interface State {
   setIncludeBasics: (v: boolean) => void;
   setAllowNonTournament: (v: boolean) => void;
   setAllowDigital: (v: boolean) => void;
+  setFormat: (f: string) => void;
   setDisabledSets: (codes: string[]) => void;
   toggleDisabledSet: (code: string) => void;
   setPrintingStrategy: (s: PrintingStrategy) => void;
@@ -118,6 +136,8 @@ interface State {
   setCoverageDensity: (d: 'compact' | 'default' | 'comfortable') => void;
   setArtGridPreferredHighlight: (v: boolean) => void;
   setOutliersTarget: (id: string) => void;
+  setCardNameFilter: (q: string) => void;
+  setLeftPanelCollapsed: (v: boolean) => void;
   toggleCoverageGroup: (group: string) => void;
   toggleFilterGroupCollapsed: (group: string) => void;
   toggleSpotlightGroupCollapsed: (group: string) => void;
@@ -129,6 +149,10 @@ interface State {
   /** Cycle a chip through the three spotlight states:
    *  off → include → exclude → off. */
   cycleSpotlightAesthetic: (id: string) => void;
+  /** Toggle a chip's exclude state on/off, leaving include untouched
+   *  except that turning exclude ON also clears any include for the
+   *  same id (the two states are mutually exclusive). */
+  toggleSpotlightExclude: (id: string) => void;
   /** Toggle every aesthetic in `groupName` for the spotlight. */
   toggleSpotlightGroup: (groupName: string, eligibleIds: string[]) => void;
 }
@@ -145,6 +169,7 @@ export const useStore = create<State>()(
       includeBasics: false,
       allowNonTournament: true,
       allowDigital: false,
+      format: '',
       disabledSets: [],
       printingStrategy: ['paper', 'lang:en', 'foil:nonfoil', 'frame:1993', 'frame:1997', 'border:black', 'first'],
       view: 'gallery',
@@ -157,6 +182,8 @@ export const useStore = create<State>()(
       coverageDensity: 'default',
       artGridPreferredHighlight: true,
       outliersTarget: 'frame_1997',
+      cardNameFilter: '',
+      leftPanelCollapsed: false,
       coverageCollapsedGroups: [],
       collapsedFilterGroups: [],
       collapsedSpotlightGroups: [],
@@ -174,9 +201,22 @@ export const useStore = create<State>()(
       toggleAesthetic: (id) =>
         set((st) => {
           const next = new Set(st.selectedAesthetics);
-          if (next.has(id)) next.delete(id);
+          const removing = next.has(id);
+          if (removing) next.delete(id);
           else next.add(id);
-          return { selectedAesthetics: next };
+          // Mirror the sidebar selection into the spotlight include list:
+          // adding a filter also spotlights it; removing a filter also
+          // removes its spotlight. Always strip from the exclude list so
+          // include and exclude stay mutually exclusive.
+          const nextIncl = removing
+            ? st.galleryAesthetics.filter((x) => x !== id)
+            : (st.galleryAesthetics.includes(id) ? st.galleryAesthetics : [...st.galleryAesthetics, id]);
+          const nextExcl = st.gallerySpotExcluded.filter((x) => x !== id);
+          return {
+            selectedAesthetics: next,
+            galleryAesthetics: nextIncl,
+            gallerySpotExcluded: nextExcl,
+          };
         }),
       toggleGroup: (_groupName, eligibleIds) =>
         set((st) => {
@@ -187,14 +227,36 @@ export const useStore = create<State>()(
           } else {
             for (const id of eligibleIds) next.add(id);
           }
-          return { selectedAesthetics: next };
+          // Mirror into spotlight include (add or remove the same set).
+          const eligibleSet = new Set(eligibleIds);
+          let nextIncl: string[];
+          if (allSelected) {
+            nextIncl = st.galleryAesthetics.filter((id) => !eligibleSet.has(id));
+          } else {
+            nextIncl = [...st.galleryAesthetics];
+            for (const id of eligibleIds) if (!nextIncl.includes(id)) nextIncl.push(id);
+          }
+          const nextExcl = st.gallerySpotExcluded.filter((id) => !eligibleSet.has(id));
+          return {
+            selectedAesthetics: next,
+            galleryAesthetics: nextIncl,
+            gallerySpotExcluded: nextExcl,
+          };
         }),
       selectAllAesthetics: () => set({ selectedAesthetics: new Set() }),
-      clearAesthetics: () => set({ selectedAesthetics: new Set() }),
+      clearAesthetics: () =>
+        set({
+          selectedAesthetics: new Set(),
+          // Symmetric with toggleAesthetic: clearing the sidebar also
+          // clears the mirrored spotlight include/exclude lists.
+          galleryAesthetics: [],
+          gallerySpotExcluded: [],
+        }),
       setIncludeSideboard: (v) => set({ includeSideboard: v }),
       setIncludeBasics: (v) => set({ includeBasics: v }),
       setAllowNonTournament: (v) => set({ allowNonTournament: v }),
       setAllowDigital: (v) => set({ allowDigital: v }),
+      setFormat: (f) => set({ format: f }),
       setDisabledSets: (codes) => set({ disabledSets: codes }),
       toggleDisabledSet: (code) =>
         set((st) => {
@@ -231,6 +293,8 @@ export const useStore = create<State>()(
       setCoverageDensity: (d) => set({ coverageDensity: d }),
       setArtGridPreferredHighlight: (v) => set({ artGridPreferredHighlight: v }),
       setOutliersTarget: (id) => set({ outliersTarget: id }),
+      setCardNameFilter: (q) => set({ cardNameFilter: q }),
+      setLeftPanelCollapsed: (v) => set({ leftPanelCollapsed: v }),
       toggleCoverageGroup: (group) =>
         set((st) => {
           const cur = st.coverageCollapsedGroups;
@@ -297,6 +361,22 @@ export const useStore = create<State>()(
             gallerySpotExcluded: st.gallerySpotExcluded.filter((x) => x !== id),
           };
         }),
+      toggleSpotlightExclude: (id) =>
+        set((st) => {
+          const inExcl = st.gallerySpotExcluded.includes(id);
+          if (inExcl) {
+            return {
+              galleryAesthetics: st.galleryAesthetics,
+              gallerySpotExcluded: st.gallerySpotExcluded.filter((x) => x !== id),
+            };
+          }
+          // Turning exclude on — also remove from include so the two
+          // states stay mutually exclusive.
+          return {
+            galleryAesthetics: st.galleryAesthetics.filter((x) => x !== id),
+            gallerySpotExcluded: [...st.gallerySpotExcluded, id],
+          };
+        }),
       toggleSpotlightGroup: (_groupName, eligibleIds) =>
         set((st) => {
           const cur = st.galleryAesthetics;
@@ -330,6 +410,7 @@ export const useStore = create<State>()(
         includeBasics: s.includeBasics,
         allowNonTournament: s.allowNonTournament,
         allowDigital: s.allowDigital,
+        format: s.format,
         disabledSets: s.disabledSets,
         printingStrategy: s.printingStrategy,
         view: s.view,
@@ -338,6 +419,8 @@ export const useStore = create<State>()(
         coverageDensity: s.coverageDensity,
         artGridPreferredHighlight: s.artGridPreferredHighlight,
         outliersTarget: s.outliersTarget,
+        cardNameFilter: s.cardNameFilter,
+        leftPanelCollapsed: s.leftPanelCollapsed,
         coverageCollapsedGroups: s.coverageCollapsedGroups,
         collapsedFilterGroups: s.collapsedFilterGroups,
         collapsedSpotlightGroups: s.collapsedSpotlightGroups,
@@ -349,12 +432,12 @@ export const useStore = create<State>()(
           galleryAesthetic?: unknown;
         };
         const sel = Array.isArray(p.selectedAesthetics)
-          ? new Set(p.selectedAesthetics as string[])
+          ? new Set((p.selectedAesthetics as unknown[]).filter((x): x is string => typeof x === 'string'))
           : current.selectedAesthetics;
         // Migrate v1 single-select galleryAesthetic -> array.
         let gallery = current.galleryAesthetics;
         if (Array.isArray(p.galleryAesthetics)) {
-          gallery = p.galleryAesthetics as string[];
+          gallery = (p.galleryAesthetics as unknown[]).filter((x): x is string => typeof x === 'string');
         } else if (typeof p.galleryAesthetic === 'string') {
           gallery = [p.galleryAesthetic];
         }
@@ -367,16 +450,16 @@ export const useStore = create<State>()(
           // these fields. Spread above would set them to `undefined`,
           // which breaks `.includes` / `.length` calls downstream.
           gallerySpotExcluded: Array.isArray(p.gallerySpotExcluded)
-            ? p.gallerySpotExcluded
+            ? (p.gallerySpotExcluded as unknown[]).filter((x): x is string => typeof x === 'string')
             : current.gallerySpotExcluded,
           collapsedFilterGroups: Array.isArray(p.collapsedFilterGroups)
-            ? p.collapsedFilterGroups
+            ? (p.collapsedFilterGroups as unknown[]).filter((x): x is string => typeof x === 'string')
             : current.collapsedFilterGroups,
           collapsedSpotlightGroups: Array.isArray(p.collapsedSpotlightGroups)
-            ? p.collapsedSpotlightGroups
+            ? (p.collapsedSpotlightGroups as unknown[]).filter((x): x is string => typeof x === 'string')
             : current.collapsedSpotlightGroups,
           coverageCollapsedGroups: Array.isArray(p.coverageCollapsedGroups)
-            ? p.coverageCollapsedGroups
+            ? (p.coverageCollapsedGroups as unknown[]).filter((x): x is string => typeof x === 'string')
             : current.coverageCollapsedGroups,
           cardSizeByView:
             p.cardSizeByView && typeof p.cardSizeByView === 'object'
@@ -398,6 +481,14 @@ export const useStore = create<State>()(
             typeof p.outliersTarget === 'string'
               ? p.outliersTarget
               : current.outliersTarget,
+          cardNameFilter:
+            typeof p.cardNameFilter === 'string'
+              ? p.cardNameFilter
+              : current.cardNameFilter,
+          leftPanelCollapsed:
+            typeof p.leftPanelCollapsed === 'boolean'
+              ? p.leftPanelCollapsed
+              : current.leftPanelCollapsed,
           // Persisted state from older builds may be missing the new
           // legality / source toggles. Spreading `p` above would set
           // them to `undefined`; reassert sane defaults.
@@ -409,8 +500,12 @@ export const useStore = create<State>()(
             typeof p.allowDigital === 'boolean'
               ? p.allowDigital
               : current.allowDigital,
+          format:
+            typeof p.format === 'string'
+              ? p.format
+              : current.format,
           disabledSets: Array.isArray(p.disabledSets)
-            ? (p.disabledSets as string[])
+            ? (p.disabledSets as unknown[]).filter((x): x is string => typeof x === 'string')
             : current.disabledSets,
           // Removed view modes — fall back to a sensible default.
           view:
@@ -503,8 +598,16 @@ export function useSpotlightMatcher(): {
   const spotlight = useStore((s) => s.galleryAesthetics);
   const spotExcluded = useStore((s) => s.gallerySpotExcluded);
   const selected = useStore((s) => s.selectedAesthetics);
+  const cardNameFilter = useStore((s) => s.cardNameFilter);
   const hasSpot = spotlight.length > 0 || spotExcluded.length > 0;
+  // Free-text card filter: parsed once per filter change as Scryfall
+  // syntax (or substring fallback for back-compat). Match function is
+  // applied as an AND with whatever spotlight/selection logic follows
+  // — non-matching cards are dimmed regardless of aesthetic membership.
+  const matcher = useMemo(() => buildMatcher(cardNameFilter), [cardNameFilter]);
+  const hasFilter = cardNameFilter.trim().length > 0;
   const match = (c: PerCardRow): boolean => {
+    if (hasFilter && !matcher.match(c)) return false;
     if (hasSpot) {
       return matchesSpotlight(
         c.available_aesthetics,
@@ -651,38 +754,20 @@ function selectionsByGroup(
   return out;
 }
 
-/** Build a map: group -> set of ALL aesthetic ids in that group (regardless
- *  of selection state). Used by `cardMatches` to detect groups that simply
- *  don't apply to a given card. */
-function allIdsByGroup(aesthetics: Aesthetic[]): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>();
-  for (const a of aesthetics) {
-    const g = a.group ?? 'Other';
-    if (!out.has(g)) out.set(g, new Set());
-    out.get(g)!.add(a.id);
-  }
-  return out;
-}
-
 /**
  * Does this card pass the given group->selectedIds filter?
  *
- * Within group: OR. Across groups: AND.
- *
- * **Skip-if-inapplicable rule**: if the card has *zero* available
- * aesthetics across the entire group (not just the selected subset), the
- * group's constraint is treated as "not applicable" and the card passes
- * automatically. This prevents a treatment-style filter (e.g. selecting
- * "Phyrexian" under Showcase Treatment) from excluding cards that simply
- * have no Showcase Treatment options at all — those rows should remain.
- *
- * Pass `groupAllIdsMap` from `allIdsByGroup(aesthetics)`. When omitted
- * the strict legacy behavior is used (every selected group must match).
+ * Within group: OR. Across groups: AND. A card with no available
+ * aesthetic in a selected group fails that group's constraint — i.e.
+ * every selected group is a hard filter. (Earlier behavior treated
+ * groups with no card-side availability as vacuously satisfied; that
+ * made sparse groups like Treatment / Showcase Treatment behave like a
+ * dim filter while dense groups like Frame Era / Border behaved like a
+ * real filter. Now they're all real filters.)
  */
 export function cardMatches(
   card: PerCardRow,
   selectionsByGroupMap: Map<string, Set<string>>,
-  groupAllIdsMap?: Map<string, Set<string>>,
   /** Pre-built `Set(card.available_aesthetics)` — pass this when calling
    *  cardMatches in a tight loop to avoid re-constructing the set per
    *  call. Built lazily otherwise. */
@@ -690,18 +775,8 @@ export function cardMatches(
 ): boolean {
   if (!card.resolved) return false;
   const cardSet = cardAvailSet ?? new Set(card.available_aesthetics);
-  for (const [groupName, groupSel] of selectionsByGroupMap) {
+  for (const [, groupSel] of selectionsByGroupMap) {
     if (groupSel.size === 0) continue;
-    // Skip-if-inapplicable: if the card has nothing in this group at all,
-    // the constraint is vacuously satisfied.
-    const groupAll = groupAllIdsMap?.get(groupName);
-    if (groupAll) {
-      let anyInGroup = false;
-      for (const id of groupAll) {
-        if (cardSet.has(id)) { anyInGroup = true; break; }
-      }
-      if (!anyInGroup) continue;
-    }
     let any = false;
     for (const aid of groupSel) {
       if (cardSet.has(aid)) {
@@ -718,11 +793,10 @@ export function cardMatches(
 export function filterCards(cards: PerCardRow[], selected: Set<string>, aesthetics: Aesthetic[]): PerCardRow[] {
   const sbg = selectionsByGroup(selected, aesthetics);
   if (sbg.size === 0) return cards.filter((c) => c.resolved);
-  const allByGroup = allIdsByGroup(aesthetics);
   // Pre-build per-card Set once instead of inside cardMatches per call.
   return cards.filter((c) => {
     if (!c.resolved) return false;
-    return cardMatches(c, sbg, allByGroup, new Set(c.available_aesthetics));
+    return cardMatches(c, sbg, new Set(c.available_aesthetics));
   });
 }
 
@@ -748,7 +822,6 @@ export function chipToggleCounts(
   const availSets: Set<string>[] = resolvedCards.map(
     (c) => new Set(c.available_aesthetics),
   );
-  const allByGroup = allIdsByGroup(aesthetics);
   // Build the base SBG once.
   const baseSbg = selectionsByGroup(selected, aesthetics);
   const idToGroup = new Map<string, string>();
@@ -791,7 +864,7 @@ export function chipToggleCounts(
       n = resolvedCards.length;
     } else {
       for (let i = 0; i < resolvedCards.length; i++) {
-        if (cardMatchesIndexed(availSets[i], baseSbg, allByGroup)) n++;
+        if (cardMatchesIndexed(availSets[i], baseSbg)) n++;
       }
     }
     out.set(a.id, n);
@@ -812,16 +885,9 @@ export function chipToggleCounts(
 function cardMatchesIndexed(
   availSet: Set<string>,
   selectionsByGroupMap: Map<string, Set<string>>,
-  groupAllIdsMap: Map<string, Set<string>>,
 ): boolean {
-  for (const [groupName, groupSel] of selectionsByGroupMap) {
+  for (const [, groupSel] of selectionsByGroupMap) {
     if (groupSel.size === 0) continue;
-    const groupAll = groupAllIdsMap.get(groupName);
-    if (groupAll) {
-      let anyInGroup = false;
-      for (const id of groupAll) if (availSet.has(id)) { anyInGroup = true; break; }
-      if (!anyInGroup) continue;
-    }
     let any = false;
     for (const aid of groupSel) if (availSet.has(aid)) { any = true; break; }
     if (!any) return false;

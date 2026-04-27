@@ -18,6 +18,7 @@ import { TimelineView } from './views/Timeline';
 import { CompareView } from './views/Compare';
 import { Drawer } from './views/Drawer';
 import { SettingsModal } from './views/SettingsModal';
+import { buildMatcher, isQuerySyntax } from './scryfallQuery';
 import type { ViewMode } from './store';
 
 const SAMPLE = `4 Lightning Bolt
@@ -74,6 +75,7 @@ export function App() {
         allow_non_tournament: s.allowNonTournament,
         allow_digital: s.allowDigital,
         disabled_sets: s.disabledSets,
+        format: s.format || undefined,
         printing_strategy: s.printingStrategy,
       });
       s.setResult(result);
@@ -101,7 +103,7 @@ export function App() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [s.decklistText, s.decklistUrl, s.includeSideboard, s.includeBasics, s.allowNonTournament, s.allowDigital, s.disabledSets, s.printingStrategy, s.health?.data_version]);
+  }, [s.decklistText, s.decklistUrl, s.includeSideboard, s.includeBasics, s.allowNonTournament, s.allowDigital, s.disabledSets, s.format, s.printingStrategy, s.health?.data_version]);
 
   const groups = useMemo(() => groupAesthetics(s.aesthetics), [s.aesthetics]);
 
@@ -135,8 +137,17 @@ export function App() {
   }, [s.result, s.selectedAesthetics, s.aesthetics]);
 
   return (
-    <div className="app">
+    <div className={'app' + (s.leftPanelCollapsed ? ' left-collapsed' : '')}>
       <aside className="left">
+        <button
+          type="button"
+          className="left-collapse-toggle"
+          onClick={() => s.setLeftPanelCollapsed(!s.leftPanelCollapsed)}
+          aria-label={s.leftPanelCollapsed ? 'Expand left panel' : 'Collapse left panel'}
+          title={s.leftPanelCollapsed ? 'Expand left panel' : 'Collapse left panel'}
+        >
+          {s.leftPanelCollapsed ? '›' : '‹'}
+        </button>
         <h1 className="brand-row">
           <span>Frame<span className="brand-accent">works</span></span>
           {s.loading && (
@@ -183,6 +194,24 @@ export function App() {
             </div>
 
             <div className="import-options">
+              <label className="row" title="Restrict the printing pool to cards legal in the chosen tournament format. Banned cards are excluded; restricted cards are kept. Cube allows any printing including silver/gold-border and un-sets.">
+                <span style={{ minWidth: 60 }}>Format</span>
+                <select
+                  value={s.format}
+                  onChange={(e) => s.setFormat(e.target.value)}
+                  style={{ flex: 1 }}
+                >
+                  <option value="">Any tournament format</option>
+                  <option value="standard">Standard</option>
+                  <option value="pioneer">Pioneer</option>
+                  <option value="modern">Modern</option>
+                  <option value="legacy">Legacy</option>
+                  <option value="vintage">Vintage</option>
+                  <option value="commander">Commander</option>
+                  <option value="pauper">Pauper</option>
+                  <option value="cube">Cube (anything goes)</option>
+                </select>
+              </label>
               <label className="row">
                 <input
                   type="checkbox"
@@ -222,7 +251,14 @@ export function App() {
             <div className="import-summary">
               <div className="import-summary-main">
                 <span className="import-summary-source">
-                  {s.decklistUrl ? new URL(s.decklistUrl).hostname.replace(/^www\./, '') : 'Pasted'}
+                  {(() => {
+                    if (!s.decklistUrl) return 'Pasted';
+                    try {
+                      return new URL(s.decklistUrl).hostname.replace(/^www\./, '');
+                    } catch {
+                      return 'URL';
+                    }
+                  })()}
                 </span>
                 {s.loading && (
                   <span className="loading-spinner" aria-label="Loading decklist" title="Loading decklist…" />
@@ -409,6 +445,12 @@ export function App() {
       >
         <div className="toolbar tabbar">
           <ViewTabs view={s.view} setView={s.setView} />
+          {(s.view === 'gallery' || s.view === 'art' || s.view === 'percard') && (
+            <CardFilterInput
+              value={s.cardNameFilter}
+              onChange={s.setCardNameFilter}
+            />
+          )}
           <span className="spacer" />
           {(s.view === 'gallery' || s.view === 'art' || s.view === 'percard') && s.view !== 'percard' && (
             <label className="size-slider" title="Card image size (saved per page)">
@@ -500,6 +542,76 @@ export function App() {
       <Drawer />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
     </div>
+  );
+}
+
+/** Top-of-page card filter input. Accepts plain card-name substrings (back-compat
+ *  with the legacy textbox) OR Scryfall-syntax queries like `t:creature mv>=3`,
+ *  `c:ur o:"draw a card"`, `set:dom OR set:bro`, etc. Parses on every change so
+ *  syntax errors are surfaced inline; the result is consumed via the same
+ *  `cardNameFilter` state field as before, so persisted values keep working.
+ */
+function CardFilterInput({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const trimmed = value.trim();
+  const isQuery = isQuerySyntax(trimmed);
+  // Re-parse on every keystroke. The matcher is cheap (regex + array iter)
+  // so we don't bother memoising — but we DO want the error message live
+  // for the inline indicator. Consumers (Gallery, store) memoise their
+  // own matcher off the same `value`, so this re-parse is local-only.
+  const parseError = useMemo(() => {
+    if (!isQuery) return null;
+    const r = buildMatcher(trimmed);
+    return 'error' in r ? r.error : null;
+  }, [trimmed, isQuery]);
+  return (
+    <label
+      className={`card-name-filter${parseError ? ' card-name-filter-error' : ''}`}
+      title={
+        parseError
+          ? `Query error: ${parseError}\nFalling back to name substring.`
+          : 'Filter cards. Plain words match by name; or use Scryfall syntax (t:, o:, c:, mv:, set:, is:foil, …). Saved across reloads.'
+      }
+    >
+      <span aria-hidden>🔍</span>
+      <input
+        type="search"
+        placeholder="Filter: name, t:creature, c:ur, mv>=3, set:dom, is:foil…"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {parseError && (
+        <span className="card-name-filter-msg" aria-live="polite">
+          {parseError}
+        </span>
+      )}
+      <a
+        className="card-name-filter-help"
+        href="https://scryfall.com/docs/syntax"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Scryfall query syntax reference"
+        onClick={(e) => e.stopPropagation()}
+      >
+        ?
+      </a>
+      {value && (
+        <button
+          type="button"
+          className="card-name-filter-clear"
+          onClick={() => onChange('')}
+          aria-label="Clear card filter"
+          title="Clear (Esc)"
+        >
+          ×
+        </button>
+      )}
+    </label>
   );
 }
 
@@ -852,10 +964,10 @@ function PrintingPreferences() {
  */
 function SpotlightPicker() {
   const aesthetics = useStore((s) => s.aesthetics);
-  const selected = useStore((s) => s.selectedAesthetics);
   const spotlight = useStore((s) => s.galleryAesthetics);
   const excluded = useStore((s) => s.gallerySpotExcluded);
-  const cycle = useStore((s) => s.cycleSpotlightAesthetic);
+  const toggleIncl = useStore((s) => s.toggleGalleryAesthetic);
+  const toggleExcl = useStore((s) => s.toggleSpotlightExclude);
   const clearSpotlight = useStore((s) => s.clearSpotlight);
   const toggleSpotGroup = useStore((s) => s.toggleSpotlightGroup);
   const collapsedSpot = useStore((s) => s.collapsedSpotlightGroups);
@@ -863,31 +975,15 @@ function SpotlightPicker() {
   const barCollapsed = useStore((s) => s.spotlightBarCollapsed);
   const setBarCollapsed = useStore((s) => s.setSpotlightBarCollapsed);
   const result = useStore((s) => s.result);
-  const filterCardsFn = filterCards;
 
-  // Chip count: cards that would be spotlit (after include/exclude rules)
-  // if this chip were toggled to its NEXT cycle state. We compute against
-  // the side-filtered cards so the number matches the visible scope.
-  const filteredCards = useMemo(() => {
-    if (!result) return [];
-    return filterCardsFn(result.per_card, selected, aesthetics);
-  }, [result, selected, aesthetics, filterCardsFn]);
-
-  // Spotlight chips visible: when a side filter is active, show every
-  // aesthetic that *could still apply to at least one of the currently
-  // filtered cards*. (Previously we restricted to side-filter membership,
-  // which hid genuinely useful spotlights — e.g. with "Border" filtered,
-  // the user couldn't spotlight a Frame era.) Always also include any
-  // spotlight ids that are currently active so the user can see what's
-  // selected even if it just dropped out of scope.
-  const visible = useMemo(() => {
-    if (selected.size === 0 || filteredCards.length === 0) return aesthetics;
-    const inDeck = new Set<string>();
-    for (const c of filteredCards) for (const id of c.available_aesthetics) inDeck.add(id);
-    for (const id of spotlight) inDeck.add(id);
-    for (const id of excluded) inDeck.add(id);
-    return aesthetics.filter((a) => inDeck.has(a.id));
-  }, [aesthetics, selected, filteredCards, spotlight, excluded]);
+  // Spotlight chips visible: always show the full aesthetic catalogue.
+  // We deliberately do NOT narrow this set by the left-side filter — when
+  // we did, clicking a single filter chip on the left reorganized the
+  // spotlight bar (chips disappeared, others shifted) which read as
+  // "the filter was applied to spotlight." The spotlight bar is now
+  // fully independent of the side filter; users still cycle each chip
+  // explicitly to include / exclude / clear.
+  const visible = aesthetics;
   const groups = useMemo(() => groupAesthetics(visible), [visible]);
 
   const spotCounts = useMemo(() => {
@@ -915,6 +1011,14 @@ function SpotlightPicker() {
       }
       return true;
     };
+    // Count against the FULL deck, not the side-filter-narrowed set.
+    // If we used filteredCards, the spotlight chip counts would track the
+    // user's left-side filter selection, and the chip that matches their
+    // filter would be the only one with a non-zero count — making the
+    // spotlight bar look like it "auto-applied" the filter chip. Counts
+    // here represent "what would match if I added/removed this chip from
+    // spotlight" against the whole deck, independent of side filters.
+    const allCards = result.per_card.filter((c) => c.resolved);
     for (const a of aesthetics) {
       // Predict the NEXT state in the cycle: off→include, include→exclude, exclude→off.
       let nextIncl = spotlight;
@@ -927,13 +1031,13 @@ function SpotlightPicker() {
         nextExcl = excluded.filter((x) => x !== a.id);
       }
       let n = 0;
-      for (const c of filteredCards) {
+      for (const c of allCards) {
         if (matchSet(c.available_aesthetics, nextIncl, nextExcl, c.default_aesthetics ?? null)) n++;
       }
       m.set(a.id, n);
     }
     return m;
-  }, [result, aesthetics, spotlight, excluded, filteredCards]);
+  }, [result, aesthetics, spotlight, excluded]);
 
   if (!result) {
     return (
@@ -995,11 +1099,13 @@ function SpotlightPicker() {
             </span>
           )
         ) : (
-          <span className="spotlight-hint muted">Click cycles: include → exclude → off · first include is primary</span>
+          <span className="spotlight-hint muted">Click chip to include · − to exclude · first include is primary</span>
         )}
       </div>
 
-      {!barCollapsed && [...groups].map(([group, items]) => {
+      {!barCollapsed && (
+      <div className="spotlight-groups">
+      {[...groups].map(([group, items]) => {
         const eligible = items.map((a) => a.id);
         const selectedInGroup = items.filter((a) => spotlight.includes(a.id)).length;
         const excludedInGroup = items.filter((a) => excluded.includes(a.id)).length;
@@ -1057,27 +1163,35 @@ function SpotlightPicker() {
                   (isExclude ? ' active exclude' : '') +
                   (isPrimary ? ' primary' : '') +
                   (!isInclude && !isExclude && cn > 0 ? ' has-matches' : '');
-                const titleParts = isInclude
-                  ? [`${a.label} — included spotlight${isPrimary ? ' (primary)' : ''}`,
-                     `Click to switch to EXCLUDE — ${cn} card${cn === 1 ? '' : 's'} would remain`]
-                  : isExclude
-                    ? [`${a.label} — excluded from spotlight`,
-                       `Click to clear — ${cn} card${cn === 1 ? '' : 's'} would remain`]
-                    : [`${a.label} — not in spotlight`,
-                       `Click to INCLUDE — ${cn} card${cn === 1 ? '' : 's'} would match`];
+                const inclTitle = isInclude
+                  ? `Remove ${a.label} from spotlight include`
+                  : `Include ${a.label} in spotlight — ${cn} card${cn === 1 ? '' : 's'} would match`;
+                const exclTitle = isExclude
+                  ? `Clear exclude — ${a.label}`
+                  : `Exclude ${a.label} from spotlight`;
                 return (
-                  <button
-                    type="button"
-                    key={a.id}
-                    className={cls}
-                    onClick={() => cycle(a.id)}
-                    aria-pressed={isInclude || isExclude}
-                    title={titleParts.join('\n')}
-                  >
-                    {isExclude && <span className="chip-sign" aria-hidden>−</span>}
-                    {a.label}
-                    <span className="chip-count">{cn}</span>
-                  </button>
+                  <span key={a.id} className="chip-pair">
+                    <button
+                      type="button"
+                      className={'chip-exclude-btn' + (isExclude ? ' active' : '')}
+                      onClick={(e) => { e.stopPropagation(); toggleExcl(a.id); }}
+                      aria-pressed={isExclude}
+                      aria-label={exclTitle}
+                      title={exclTitle}
+                    >
+                      <span className="chip-exclude-bar" aria-hidden />
+                    </button>
+                    <button
+                      type="button"
+                      className={cls}
+                      onClick={() => toggleIncl(a.id)}
+                      aria-pressed={isInclude}
+                      title={inclTitle}
+                    >
+                      {a.label}
+                      <span className="chip-count">{cn}</span>
+                    </button>
+                  </span>
                 );
               })}
             </div>
@@ -1085,6 +1199,8 @@ function SpotlightPicker() {
           </div>
         );
       })}
+      </div>
+      )}
 
       {!barCollapsed && visible.length === 0 && (
         <div className="muted" style={{ fontSize: 11 }}>

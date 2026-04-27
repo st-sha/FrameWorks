@@ -52,6 +52,7 @@ class MtgTop8Importer:
                 "Accept": "*/*",
             },
             follow_redirects=True,
+            max_redirects=3,
         ) as client:
             r = client.get(EXPORT_TEMPLATE.format(deck_id=deck_id))
             r.raise_for_status()

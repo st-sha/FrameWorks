@@ -230,7 +230,7 @@ export function PerCardView() {
         </thead>
         <tbody>
           {sorted.map((c) => {
-            const matched = spotMatch(c);
+            if (!spotMatch(c)) return null;
             return (
               <Row
                 key={c.name_normalized}
@@ -241,7 +241,6 @@ export function PerCardView() {
                 coverage={coverageCounts.get(c.name_normalized) ?? 0}
                 maxCoverage={maxCoverage}
                 onPickAesthetic={openDrawer}
-                dim={!matched}
               />
             );
           })}
@@ -295,7 +294,6 @@ function Row({
   coverage,
   maxCoverage,
   onPickAesthetic,
-  dim,
 }: {
   card: PerCardRow;
   cols: Aesthetic[];
@@ -304,7 +302,6 @@ function Row({
   coverage: number;
   maxCoverage: number;
   onPickAesthetic: (id: string, card: { oracle_id: string | null; name: string }) => void;
-  dim?: boolean;
 }) {
   const [hover, setHover] = useState<{ x: number; y: number; img: string } | null>(null);
   const defaultImg = card.default?.image_normal ?? null;
@@ -329,7 +326,7 @@ function Row({
   return (
     <>
       <tr
-        className={'cov-row' + (card.resolved ? '' : ' unresolved') + (dim ? ' spotlight-dim' : '')}
+        className={'cov-row' + (card.resolved ? '' : ' unresolved')}
         onMouseMove={(e) => {
           if (!defaultImg) return;
           // Row-level hover: only fire when the cursor is over the

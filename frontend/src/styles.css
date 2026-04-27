@@ -96,13 +96,56 @@ textarea {
   height: 100vh;
 }
 
+/* Collapsed left panel: shrink to a slim strip just wide enough to host
+ * the expand-chevron. Inner left-panel content is hidden via .left > *
+ * below; the toggle button stays visible because it sits OUTSIDE that
+ * selector via :first-child anchoring. */
+.app.left-collapsed {
+  grid-template-columns: 28px 1fr;
+}
+
 .left, .right { padding: 18px 18px 32px; overflow: auto; }
 .left {
   background: var(--panel);
   border-right: 1px solid var(--border);
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
+  position: relative;
 }
+
+/* Floating toggle in the top-right corner of the left panel. Pulled
+ * slightly outside the panel border so it remains visible (and clickable)
+ * even when the panel is collapsed to its slim strip. */
+.left-collapse-toggle {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-2);
+  color: var(--text-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  z-index: 10;
+}
+.left-collapse-toggle:hover {
+  color: var(--text);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Hide every direct child of the left panel except the toggle when
+ * collapsed. Using `:not(.left-collapse-toggle)` keeps the markup simple
+ * — no need to wrap the rest of the panel in an extra container. */
+.app.left-collapsed .left { padding: 4px; }
+.app.left-collapsed .left > *:not(.left-collapse-toggle) { display: none; }
 .right { background: transparent; }
 
 h1 {
@@ -314,18 +357,6 @@ h2 {
   padding: 12px;
   border: 1px dashed var(--border);
   background: var(--panel);
-}
-.mtg-card .qty-badge {
-  position: absolute;
-  top: 6px;
-  left: 6px;
-  background: rgba(10, 13, 15, 0.85);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 2px 7px;
-  border-radius: 999px;
-  backdrop-filter: blur(4px);
 }
 .mtg-card .set-badge {
   position: absolute;
@@ -2053,25 +2084,44 @@ a.cov-mark:hover { background: var(--accent); }
 }
 .spotlight-clear:hover { color: var(--accent); border-color: var(--accent); }
 .spotlight-hint { font-size: 10px; letter-spacing: 0.3px; }
-.spotlight-group {
+/* Spotlight groups laid out as wrapping columns. Each group is a
+ * vertical tile: heading on top, chips beneath. */
+.spotlight-groups {
   display: grid;
-  grid-template-columns: minmax(120px, 160px) 1fr;
-  align-items: start;
-  gap: 4px 12px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px;
+}
+.spotlight-group {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   padding: 6px 8px 6px 10px;
   border-left: 3px solid var(--gc, var(--accent));
   border-radius: 0 4px 4px 0;
   background: color-mix(in srgb, var(--gc, var(--accent)) 6%, transparent);
   /* `--gc` is set by .g-* mapping at the top of this file. */
+  min-width: 0;
 }
-.spotlight-group + .spotlight-group { /* divider via top margin only when stacked */ }
+/* Showcase Treatment has many more chips than the other groups; let it
+ * span two grid columns so the chips don't crowd into a tall narrow
+ * stack. Only applies when the row actually has >=2 columns; collapses
+ * back to one at the narrowest breakpoint. */
+.spotlight-groups .spotlight-group.g-showcase {
+  grid-column: span 2;
+}
+@media (max-width: 560px) {
+  .spotlight-groups .spotlight-group.g-showcase {
+    grid-column: auto;
+  }
+}
 .spotlight-group-title {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
   color: var(--gc);
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 6px;
@@ -2091,6 +2141,37 @@ a.cov-mark:hover { background: var(--accent); }
   flex-wrap: wrap;
   gap: 4px;
 }
+/* Showcase Treatment is the largest group; its tile already spans two
+ * grid columns of the outer spotlight grid (see `.spotlight-group.g-showcase`).
+ * Inside the tile, lay the chips out in a 2-column grid so each chip
+ * sits in a left-aligned column instead of fluidly wrapping. */
+.spotlight-group.g-showcase .chips {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  justify-items: stretch;
+}
+.spotlight-group.g-showcase .chip-pair {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+}
+.spotlight-group.g-showcase .chip-pair .chip {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  /* Keep the count right-aligned within the chip rather than crowding
+   * the label, since each chip now occupies a full column. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+@media (max-width: 560px) {
+  .spotlight-group.g-showcase .chips {
+    grid-template-columns: 1fr;
+  }
+}
 .spotlight-group .chip { font-size: 11px; padding: 2px 8px; }
 .spotlight-group .chip.primary { box-shadow: inset 0 0 0 1px var(--accent-2); }
 .spotlight-group .chip-count {
@@ -2098,15 +2179,26 @@ a.cov-mark:hover { background: var(--accent); }
   font-size: 9px;
   margin-left: 4px;
   padding: 0 4px;
+  /* Reserve room for up to ~3 digits so the chip width does not shift
+   * when the count changes (e.g. on toggle or when other filters move). */
+  min-width: 22px;
+  display: inline-block;
+  text-align: center;
   border-radius: 3px;
   background: rgba(255,255,255,0.06);
   color: var(--muted);
 }
 .spotlight-group .chip.active .chip-count { background: rgba(0,0,0,0.25); color: var(--accent-ink); }
 
-/* Narrow viewports: stack the heading above the chips. */
+/* Narrow viewports: shrink min column width so we still fit two-up;
+ * very narrow falls back to a single column. */
 @media (max-width: 900px) {
-  .spotlight-group {
+  .spotlight-groups {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}
+@media (max-width: 560px) {
+  .spotlight-groups {
     grid-template-columns: 1fr;
   }
 }
@@ -2347,6 +2439,65 @@ a.cov-mark:hover { background: var(--accent); }
 .group-title-label:hover { filter: brightness(1.15); }
 .group-title-label:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
+/* === Spotlight chip: chip with leading exclude button (Option B) ===
+ * The chip itself is the include toggle; a small `−` button to its
+ * LEFT toggles exclude. The exclude button is hidden by default and
+ * fades in on hover/focus, or stays visible when active. Placing it
+ * on the left keeps the chip labels left-aligned and consistent. */
+.chip-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.spotlight-group .chip {
+  /* Constant typographic weight: prevents width-shift when active.
+   * Active state is signalled by background/border color, not weight. */
+  font-weight: 600;
+}
+.chip-exclude-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+  cursor: pointer;
+  flex: 0 0 auto;
+  align-self: center;
+  opacity: 0;
+  transition: opacity 80ms, color 80ms, background 80ms, border-color 80ms;
+}
+.chip-pair:hover .chip-exclude-btn,
+.chip-pair:focus-within .chip-exclude-btn,
+.chip-exclude-btn.active {
+  opacity: 1;
+}
+.chip-exclude-btn:hover,
+.chip-exclude-btn.active {
+  color: var(--bad);
+  border-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+}
+.chip-exclude-btn.active {
+  background: color-mix(in srgb, var(--bad) 22%, transparent);
+}
+.chip-exclude-btn:focus-visible {
+  outline: 2px solid var(--bad);
+  outline-offset: 1px;
+  opacity: 1;
+}
+.chip-exclude-bar {
+  display: block;
+  width: 9px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
 /* === Spotlight exclude state === */
 .spotlight-group .chip.active.include {
   background: var(--gc, var(--accent));
@@ -2362,13 +2513,6 @@ a.cov-mark:hover { background: var(--accent); }
 .spotlight-group .chip.active.exclude .chip-count {
   color: var(--bad);
   background: rgba(214, 138, 125, 0.12);
-}
-.spotlight-group .chip-sign {
-  display: inline-block;
-  font-weight: 700;
-  margin-right: 4px;
-  font-size: 12px;
-  line-height: 1;
 }
 .excl-count {
   color: var(--bad);
@@ -2773,4 +2917,84 @@ h1.brand-row .loading-spinner {
   text-align: center;
   z-index: 6;
   box-shadow: 0 1px 3px rgba(0,0,0,0.5);
+}
+
+/* === Top-toolbar card-name filter ===
+ * Free-text filter that dims (does not hide) cards whose name doesn't
+ * contain the substring. Visible only on card-showing views. The actual
+ * dimming is driven by `.spotlight-dim`, which already exists across
+ * Gallery / Coverage / Art Grid / Timeline. */
+.card-name-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: 8px;
+}
+.card-name-filter:focus-within {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-2));
+}
+.card-name-filter input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  width: 180px;
+  padding: 4px 2px;
+}
+.card-name-filter input::placeholder { color: var(--muted); }
+.card-name-filter-clear {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.card-name-filter-clear:hover {
+  background: var(--accent);
+  color: #fff;
+}
+.card-name-filter input {
+  /* Wider to accommodate Scryfall-syntax queries like `t:creature mv>=3 c:ur`. */
+  width: 280px;
+}
+.card-name-filter-error {
+  border-color: var(--danger, #d04040);
+  background: color-mix(in srgb, var(--danger, #d04040) 8%, var(--bg-2));
+}
+.card-name-filter-msg {
+  font-size: 11px;
+  color: var(--danger, #d04040);
+  padding: 0 4px;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-name-filter-help {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.card-name-filter-help:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }

@@ -29,7 +29,7 @@ COPY pyproject.toml ./
 RUN pip install --no-cache-dir \
       "fastapi>=0.115" "uvicorn[standard]>=0.32" "duckdb>=1.1" \
       "httpx>=0.27" "apscheduler>=3.10" "pyyaml>=6.0" "pydantic>=2.9" \
-      "beautifulsoup4>=4.12" "lxml>=5.3"
+      "beautifulsoup4>=4.12" "lxml>=5.3" "curl_cffi>=0.7"
 
 COPY backend/ ./backend/
 COPY rulesets/ ./rulesets/

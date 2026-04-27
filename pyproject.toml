@@ -1,6 +1,6 @@
 [project]
 name = "deckaesthetics"
-version = "0.1.0"
+version = "0.1.1"
 description = "Analyze MTG decklists for available frame/border/aesthetic printings"
 requires-python = ">=3.12"
 dependencies = [
@@ -13,6 +13,11 @@ dependencies = [
     "pydantic>=2.9",
     "beautifulsoup4>=4.12",
     "lxml>=5.3",
+    # Optional but strongly recommended: TLS-impersonation HTTP client used
+    # by importers that hit Cloudflare-fronted hosts (Moxfield, Melee).
+    # Falls back to plain httpx when not installed; falling-back hosts will
+    # surface a friendly 403 message instead of a hard crash.
+    "curl_cffi>=0.7",
 ]
 
 [project.optional-dependencies]

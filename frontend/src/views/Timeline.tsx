@@ -38,14 +38,13 @@ export function TimelineView() {
       set: string | null;
       cn: string | null;
       frame: string | null;
-      dim: boolean;
     }> = [];
     for (const c of cards) {
+      if (hasSpot && !spotMatch(c)) continue;
       const p = (primaryId && c.examples[primaryId]) || c.default;
       if (!p?.released_at) continue;
       const d = new Date(p.released_at);
       if (Number.isNaN(d.getTime())) continue;
-      const matches = !hasSpot || spotMatch(c);
       out.push({
         key: c.name_normalized,
         name: c.name,
@@ -57,7 +56,6 @@ export function TimelineView() {
         set: p.set,
         cn: p.collector_number,
         frame: p.frame,
-        dim: !matches,
       });
     }
     out.sort((a, b) => a.day - b.day);
@@ -186,7 +184,7 @@ export function TimelineView() {
           {placed.map((e) => (
             <a
               key={e.key + '-' + e.released}
-              className={'tl-tile' + (e.dim ? ' spotlight-dim' : '')}
+              className={'tl-tile'}
               href={
                 e.set && e.cn
                   ? `https://scryfall.com/card/${encodeURIComponent(e.set)}/${encodeURIComponent(e.cn)}`

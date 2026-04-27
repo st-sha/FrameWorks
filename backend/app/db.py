@@ -102,6 +102,13 @@ def _ensure_schema(c: duckdb.DuckDBPyConnection) -> None:
         );
         """
     )
+    # Per-format legality columns. Added in a later schema rev; if the
+    # printings table already exists from before, ALTER it to add the
+    # missing columns. Defaults to TRUE so an un-refreshed DB doesn't
+    # silently drop every printing when the user picks a format — they
+    # just see no filtering until the next Scryfall refresh repopulates
+    # the column with real values.
+    _ensure_format_columns(c)
     c.execute(
         """
         CREATE TABLE IF NOT EXISTS cards (
@@ -111,10 +118,74 @@ def _ensure_schema(c: duckdb.DuckDBPyConnection) -> None:
         );
         """
     )
+    # Oracle-level gameplay columns (added in a later schema rev to support
+    # Scryfall-syntax filtering on the frontend). Populated by the
+    # Scryfall ingest; NULL until the next refresh runs.
+    _ensure_oracle_columns(c)
     c.execute("CREATE INDEX IF NOT EXISTS idx_printings_oracle ON printings(oracle_id);")
     c.execute(
         "CREATE INDEX IF NOT EXISTS idx_cards_name_norm ON cards(name_normalized);"
     )
+
+
+# Per-format legality columns. Order matches what the ingest SQL emits.
+FORMAT_COLUMNS: tuple[str, ...] = (
+    "legal_standard",
+    "legal_pioneer",
+    "legal_modern",
+    "legal_legacy",
+    "legal_vintage",
+    "legal_commander",
+    "legal_pauper",
+)
+
+
+def _ensure_format_columns(c: duckdb.DuckDBPyConnection) -> None:
+    existing = {
+        row[0]
+        for row in c.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'printings'"
+        ).fetchall()
+    }
+    for col in FORMAT_COLUMNS:
+        if col not in existing:
+            c.execute(f"ALTER TABLE printings ADD COLUMN {col} BOOLEAN DEFAULT TRUE;")
+
+
+# Oracle-level gameplay columns added to `cards` so the frontend
+# Scryfall-syntax evaluator can match `t:`, `o:`, `c:`, `mv:`, `pow:`, etc.
+# All nullable so an un-refreshed DB still works (predicates that reference
+# missing data will simply not match).
+ORACLE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("type_line", "VARCHAR"),
+    ("oracle_text", "VARCHAR"),
+    ("mana_cost", "VARCHAR"),
+    ("cmc", "DOUBLE"),
+    ("colors", "VARCHAR[]"),
+    ("color_identity", "VARCHAR[]"),
+    ("power", "VARCHAR"),
+    ("toughness", "VARCHAR"),
+    ("loyalty", "VARCHAR"),
+    ("defense", "VARCHAR"),
+    ("rarity", "VARCHAR"),
+    ("keywords", "VARCHAR[]"),
+    ("produced_mana", "VARCHAR[]"),
+    ("layout", "VARCHAR"),
+)
+
+
+def _ensure_oracle_columns(c: duckdb.DuckDBPyConnection) -> None:
+    existing = {
+        row[0]
+        for row in c.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'cards'"
+        ).fetchall()
+    }
+    for col, ty in ORACLE_COLUMNS:
+        if col not in existing:
+            c.execute(f"ALTER TABLE cards ADD COLUMN {col} {ty};")
 
 
 def normalize_name(name: str) -> str:

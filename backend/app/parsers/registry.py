@@ -21,6 +21,13 @@ _REGISTRY: list[Importer] = []
 
 
 def register(importer: Importer) -> Importer:
+    # Normalize host suffixes once so URL matching (which lowercases
+    # the request host) doesn't accidentally fail on importers that
+    # registered with mixed-case hosts.
+    try:
+        importer.hosts = tuple(h.lower() for h in importer.hosts)  # type: ignore[misc]
+    except (AttributeError, TypeError):
+        pass
     _REGISTRY.append(importer)
     return importer
 

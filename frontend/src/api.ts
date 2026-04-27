@@ -48,6 +48,21 @@ export interface PerCardExample {
    *  frontend overlays a red "Not tournament legal" banner on these.
    *  Optional for backwards compatibility. */
   is_tournament_legal?: boolean;
+  // ---- Printing-aesthetic fields surfaced for the Scryfall-syntax
+  //      filter (border:, is:foil, is:promo, is:fullart, …). All
+  //      optional so older backends still type-check. ----
+  border_color?: string | null;
+  full_art?: boolean | null;
+  textless?: boolean | null;
+  promo?: boolean | null;
+  digital?: boolean | null;
+  lang?: string | null;
+  nonfoil?: boolean | null;
+  foil?: boolean | null;
+  security_stamp?: string | null;
+  set_type?: string | null;
+  frame_effects?: string[] | null;
+  promo_types?: string[] | null;
 }
 
 export interface PerCardRow {
@@ -67,6 +82,24 @@ export interface PerCardRow {
   version_counts?: Record<string, number>;
   examples: Record<string, PerCardExample>;
   default: PerCardExample | null;
+  // ---- Oracle-level gameplay fields (populated by backends that have
+  //      a Scryfall refresh including the gameplay columns). All optional
+  //      so older / un-refreshed backends still type-check; the
+  //      Scryfall-syntax filter treats absent fields as non-matches. ----
+  type_line?: string;
+  oracle_text?: string;
+  mana_cost?: string;
+  cmc?: number;
+  colors?: string[];
+  color_identity?: string[];
+  power?: string;
+  toughness?: string;
+  loyalty?: string;
+  defense?: string;
+  rarity?: string;
+  keywords?: string[];
+  produced_mana?: string[];
+  layout?: string;
 }
 
 export interface AnalyzeResponse {
@@ -147,6 +180,7 @@ export const api = {
     allow_non_tournament?: boolean;
     allow_digital?: boolean;
     disabled_sets?: string[];
+    format?: string;
     printing_strategy?: PrintingStrategy;
   }) =>
     jfetch<AnalyzeResponse>('/api/analyze', {
@@ -161,6 +195,7 @@ export const api = {
     allow_non_tournament?: boolean;
     allow_digital?: boolean;
     disabled_sets?: string[];
+    format?: string;
     limit?: number;
   }) =>
     jfetch<PrintingsResponse>('/api/printings', {

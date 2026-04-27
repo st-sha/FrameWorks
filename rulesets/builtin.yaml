@@ -138,10 +138,10 @@ aesthetics:
   # rather than the generic "Showcase" bucket.
   - id: showcase_mystical_archive
     label: "Mystical Archive"
-    description: "STX bonus sheet treatment (Strixhaven Mystical Archive)."
+    description: "STX Mystical Archive treatment (Strixhaven sta + Secrets of Strixhaven soa reprints)."
     group: "Showcase Treatment"
     match:
-      equals: { set: "sta" }
+      in: { set: ["sta", "soa"] }
 
   - id: showcase_mystical_archive_jp
     label: "Mystical Archive (Japanese)"
@@ -149,7 +149,7 @@ aesthetics:
     group: "Showcase Treatment"
     match:
       all:
-        - equals: { set: "sta" }
+        - in: { set: ["sta", "soa"] }
         - equals: { lang: "ja" }
 
   - id: showcase_retro_schematic

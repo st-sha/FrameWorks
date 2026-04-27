@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { PerCardExample } from '../api';
 import { useSpotlightMatcher, useStore } from '../store';
 import { groupClass } from './insightsUtil';
+import { CardImage } from './MtgCard';
 
 export function ArtGridView() {
   const result = useStore((s) => s.result)!;
@@ -11,13 +12,18 @@ export function ArtGridView() {
   const setHighlightPreferred = useStore((s) => s.setArtGridPreferredHighlight);
   const { hasSpot: hasSpotlight, match: spotMatch } = useSpotlightMatcher();
 
-  // Art Grid is a coverage matrix: every (resolved) card row is always shown.
-  // Sidebar filters only narrow the COLUMNS that are visible; they never
-  // hide rows. Empty columns (no card in the deck has a printing for that
-  // aesthetic) are dropped entirely so they don't waste horizontal space.
+  // Art Grid is a coverage matrix: every (resolved) card row is shown,
+  // unless the spotlight (top-bar include/exclude or card-name search)
+  // filters it out — in which case the row is omitted entirely.
+  // Sidebar filters narrow the COLUMNS that are visible; empty columns
+  // are dropped so they don't waste horizontal space.
   const rows = useMemo(
-    () => result.per_card.filter((c) => c.resolved),
-    [result.per_card],
+    () => {
+      const base = result.per_card.filter((c) => c.resolved);
+      if (!hasSpotlight) return base;
+      return base.filter((c) => spotMatch(c));
+    },
+    [result.per_card, hasSpotlight, spotMatch],
   );
 
   const cols = useMemo(() => {
@@ -115,7 +121,6 @@ export function ArtGridView() {
           ))}
 
           {rows.map((c) => {
-            const matchesSpot = !hasSpotlight || spotMatch(c);
             return (
               <RowGroup
                 key={c.name_normalized}
@@ -123,7 +128,6 @@ export function ArtGridView() {
                 qty={c.qty}
                 setCode={c.default?.set?.toUpperCase() ?? null}
                 preferred={c.default}
-                dim={!matchesSpot}
               >
                 {/* Preferred column always renders the default printing
                     full-size, with the same affordances as a normal cell so
@@ -132,7 +136,6 @@ export function ArtGridView() {
                   key="__preferred__"
                   name={c.name}
                   printing={c.default ?? undefined}
-                  dim={!matchesSpot}
                   /* The dedicated Preferred column is its own column — it
                    * shouldn't ALSO get the per-cell preferred outline. */
                   preferred={false}
@@ -145,7 +148,6 @@ export function ArtGridView() {
                       key={a.id}
                       name={c.name}
                       printing={ex}
-                      dim={!matchesSpot}
                       preferred={highlightPreferred && isPreferred(c.default, ex)}
                       groupCls={groupClass(a.group)}
                     />
@@ -176,14 +178,12 @@ function RowGroup({
   qty,
   setCode,
   preferred,
-  dim,
   children,
 }: {
   name: string;
   qty: number;
   setCode: string | null;
   preferred: PerCardExample | null | undefined;
-  dim?: boolean;
   children: React.ReactNode;
 }) {
   // Prefer art crop (square-ish, faster), fall back to the full image.
@@ -192,10 +192,9 @@ function RowGroup({
     preferred?.set && preferred?.collector_number
       ? `https://scryfall.com/card/${encodeURIComponent(preferred.set)}/${encodeURIComponent(preferred.collector_number)}`
       : null;
-  const dimCls = dim ? ' spotlight-dim' : '';
   return (
     <>
-      <div className={'art-grid-name sticky-left' + dimCls}>
+      <div className={'art-grid-name sticky-left'}>
         {thumb ? (
           url ? (
             <a
@@ -228,9 +227,9 @@ function RowGroup({
   );
 }
 
-function ArtCell({ name, printing, dim, preferred, sticky, groupCls }: { name: string; printing: PerCardExample | undefined; dim?: boolean; preferred?: boolean; sticky?: boolean; groupCls?: string }) {
+function ArtCell({ name, printing, preferred, sticky, groupCls }: { name: string; printing: PerCardExample | undefined; preferred?: boolean; sticky?: boolean; groupCls?: string }) {
   if (!printing?.image_normal) {
-    return <div className={'art-cell empty' + (dim ? ' spotlight-dim' : '') + (sticky ? ' sticky-left-2' : '') + (groupCls ? ' ' + groupCls : '')}>·</div>;
+    return <div className={'art-cell empty' + (sticky ? ' sticky-left-2' : '') + (groupCls ? ' ' + groupCls : '')}>·</div>;
   }
   const scryUrl = `https://scryfall.com/card/${encodeURIComponent(printing.set ?? '')}/${encodeURIComponent(printing.collector_number ?? '')}`;
   const tcgUrl = tcgplayerSearchUrl(name, printing.set);
@@ -240,7 +239,6 @@ function ArtCell({ name, printing, dim, preferred, sticky, groupCls }: { name: s
       : '—';
   const cls =
     'art-cell' +
-    (dim ? ' spotlight-dim' : '') +
     (preferred ? ' preferred' : '') +
     (sticky ? ' sticky-left-2' : '') +
     (groupCls ? ' ' + groupCls : '');
@@ -253,7 +251,7 @@ function ArtCell({ name, printing, dim, preferred, sticky, groupCls }: { name: s
         rel="noopener noreferrer"
         title={`${name} — ${printing.set?.toUpperCase() ?? ''} ${printing.collector_number ?? ''}`}
       >
-        <img src={printing.image_normal} alt="" loading="lazy" draggable={false} />
+        <CardImage src={printing.image_normal} alt="" />
       </a>
       <div className="art-cell-meta">
         <span className="ac-set">{printing.set?.toUpperCase()}</span>

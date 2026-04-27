@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import re
 
-import httpx
 from bs4 import BeautifulSoup
 
+from ..http import browser_get
 from ..registry import register
 from ..text import DecklistEntry, ParseResult, parse_text
 
@@ -28,30 +28,30 @@ class MeleeImporter:
         if not m:
             raise ValueError(f"Could not extract Melee decklist id from {url!r}")
 
-        # Melee blocks generic UAs with 403; mimic a real browser.
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Upgrade-Insecure-Requests": "1",
-        }
-        with httpx.Client(timeout=20, headers=headers, follow_redirects=True) as client:
-            r = client.get(url)
-            if r.status_code == 403:
-                raise RuntimeError(
-                    "Melee.gg returned 403 Forbidden. The site may be "
-                    "rate-limiting or blocking server requests \u2014 please "
-                    "copy the decklist text from the page instead."
-                )
-            r.raise_for_status()
-            html = r.text
+        # Melee blocks generic UAs / TLS fingerprints with 403; use the
+        # browser-impersonating fetcher.
+        r = browser_get(
+            url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Upgrade-Insecure-Requests": "1",
+            },
+        )
+        if r.status_code == 403:
+            raise RuntimeError(
+                "Melee.gg returned 403 Forbidden. The site may be "
+                "rate-limiting or blocking server requests \u2014 please "
+                "copy the decklist text from the page instead."
+            )
+        if not r.ok:
+            raise RuntimeError(
+                f"Melee returned HTTP {r.status_code} for {url!r}"
+            )
+        html = r.text
 
         # Strategy 0: Melee embeds the full text export in <pre id="decklist-text">.
         soup0 = BeautifulSoup(html, "lxml")

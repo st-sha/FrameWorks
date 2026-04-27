@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PerCardExample, PerCardRow, PrintingDetail } from '../api';
 import { api } from '../api';
 import { filterCards, useAestheticIndex, useStore } from '../store';
-import { MtgCard } from './MtgCard';
+import { buildMatcher } from '../scryfallQuery';
+import { MtgCard, CardImage } from './MtgCard';
 
 export function GalleryView() {
   const result = useStore((s) => s.result)!;
@@ -12,10 +13,20 @@ export function GalleryView() {
   const spotExcluded = useStore((s) => s.gallerySpotExcluded);
   const setGalleryAesthetics = useStore((s) => s.setGalleryAesthetics);
   const printingStrategy = useStore((s) => s.printingStrategy);
+  // Free-text card filter from the toolbar. Now interpreted as
+  // Scryfall-syntax (https://scryfall.com/docs/syntax) when it contains
+  // operator-ish characters; bare words remain a name-substring match
+  // for back-compat with the legacy textbox.
+  const cardNameFilter = useStore((s) => s.cardNameFilter);
+  const matcher = useMemo(() => buildMatcher(cardNameFilter), [cardNameFilter]);
 
   const filtered = useMemo(
-    () => filterCards(result.per_card, selected, aesthetics),
-    [result.per_card, selected, aesthetics],
+    () => {
+      const base = filterCards(result.per_card, selected, aesthetics);
+      if (!cardNameFilter.trim()) return base;
+      return base.filter(matcher.match);
+    },
+    [result.per_card, selected, aesthetics, cardNameFilter, matcher],
   );
 
   // Drop spotlight ids that are no longer in the active filter selection,
@@ -41,6 +52,19 @@ export function GalleryView() {
   /** Card whose multi-printing modal is currently open. */
   const [expandCard, setExpandCard] = useState<PerCardRow | null>(null);
   const cache = useRef(new Map<string, PrintingDetail[]>());
+  // Cap to prevent unbounded growth on long sessions: each entry holds
+  // up to 24 printing dicts (~10KB), so 200 entries ≈ 2MB ceiling.
+  const CACHE_MAX = 200;
+  const cacheSet = (key: string, val: PrintingDetail[]) => {
+    const m = cache.current;
+    if (m.has(key)) m.delete(key);
+    m.set(key, val);
+    while (m.size > CACHE_MAX) {
+      const oldest = m.keys().next().value;
+      if (oldest === undefined) break;
+      m.delete(oldest);
+    }
+  };
 
   const openHover = (
     card: PerCardRow,
@@ -60,7 +84,7 @@ export function GalleryView() {
         limit: 24,
       })
       .then((r) => {
-        cache.current.set(key, r.printings);
+        cacheSet(key, r.printings);
         setHover((cur) =>
           cur && cur.card.name_normalized === card.name_normalized
             ? { ...cur, printings: r.printings }
@@ -95,7 +119,7 @@ export function GalleryView() {
         limit: 24,
       })
       .then((r) => {
-        cache.current.set(key, r.printings);
+        cacheSet(key, r.printings);
         setHover((cur) =>
           cur && cur.card.name_normalized === card.name_normalized
             ? { ...cur, printings: r.printings }
@@ -212,7 +236,6 @@ export function GalleryView() {
             >
               <MtgCard
                 name={c.name}
-                qty={c.qty}
                 printing={shown}
                 unavailable={unavailable}
                 unresolved={!c.resolved}
@@ -375,7 +398,7 @@ function SpotlightExpandModal({
                   className="sm-cell-img"
                 >
                   {ex?.image_normal && (
-                    <img src={ex.image_normal} alt="" draggable={false} />
+                    <CardImage src={ex.image_normal} alt="" />
                   )}
                 </a>
                 <div className="sm-cell-meta muted">
@@ -506,7 +529,7 @@ function PrintingsPopover({
             rel="noopener noreferrer"
             title={`${featured.set?.toUpperCase() ?? ''} ${featured.collector_number ?? ''}${featured.released_at ? ` · ${featured.released_at.slice(0, 10)}` : ''}${featured.price_usd != null ? ` · $${featured.price_usd.toFixed(2)}` : ''}`}
           >
-            <img src={featured.image_normal ?? ''} alt="" draggable={false} />
+            <CardImage src={featured.image_normal} alt="" loading="eager" />
             {featured.is_tournament_legal === false && (
               <div className="not-legal-overlay" aria-hidden>
                 <span className="not-legal-band">Not tournament legal</span>
@@ -546,7 +569,7 @@ function PrintingsPopover({
               role="option"
               title={`${p.set?.toUpperCase() ?? ''} ${p.collector_number ?? ''}${p.released_at ? ` · ${p.released_at.slice(0, 10)}` : ''}`}
             >
-              <img src={p.image_normal ?? ''} alt="" loading="lazy" draggable={false} />
+              <CardImage src={p.image_normal} alt="" />
               <span className="pp-strip-rank">{i + 1}</span>
               {p.is_tournament_legal === false && (
                 <span className="pp-strip-illegal" title="Not tournament legal" aria-hidden>!</span>

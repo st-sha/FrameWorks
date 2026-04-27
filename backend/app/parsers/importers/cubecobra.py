@@ -43,19 +43,27 @@ class CubeCobraImporter:
             timeout=30,
             headers={"User-Agent": "Frameworks/0.1"},
             follow_redirects=True,
+            max_redirects=3,
         ) as client:
             r = client.get(CUBELIST_TEMPLATE.format(cube_id=cube_id))
             r.raise_for_status()
             text = r.text
 
         result = ParseResult()
+        # Cubes are typically singleton, but the export occasionally
+        # contains the same card twice (split across sections, or as a
+        # genuine multi-copy slot). Aggregate so a card appearing N
+        # times is emitted once with qty=N rather than N entries with
+        # qty=1 (which downstream code treats as separate slots).
+        from collections import Counter
+        counts: Counter[str] = Counter()
         for line in text.splitlines():
             name = line.strip()
             if not name:
                 continue
-            # Each line is one copy of a card; cubes are typically singleton
-            # but we still collapse exact duplicates to qty>1 for safety.
-            result.entries.append(DecklistEntry(name=name, qty=1, section="mainboard"))
+            counts[name] += 1
+        for name, qty in counts.items():
+            result.entries.append(DecklistEntry(name=name, qty=qty, section="mainboard"))
         return result
 
 

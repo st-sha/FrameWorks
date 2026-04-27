@@ -36,6 +36,7 @@ class ArchidektImporter:
             timeout=20,
             headers={"User-Agent": "Frameworks/0.1", "Accept": "application/json"},
             follow_redirects=True,
+            max_redirects=3,
         ) as client:
             r = client.get(API_TEMPLATE.format(deck_id=deck_id))
             r.raise_for_status()

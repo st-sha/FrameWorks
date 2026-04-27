@@ -109,7 +109,7 @@ async def lifespan(app: FastAPI):
         sched.shutdown(wait=False)
 
 
-app = FastAPI(title="Frameworks", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Frameworks", version="0.1.1", lifespan=lifespan)
 
 
 # ----------------------------- Schemas -----------------------------
@@ -138,6 +138,12 @@ class AnalyzeRequest(BaseModel):
     # Per-set kill switch. Set codes listed here are dropped from the
     # printing pool entirely (more granular than the blanket toggle above).
     disabled_sets: list[str] = []
+    # Format-specific tournament filter. When set to a known format id
+    # (e.g. 'standard', 'modern', 'commander'), the printing pool is
+    # restricted to printings legal in that format (legal/restricted;
+    # banned cards are excluded). When None, no per-format filter is
+    # applied; the broader `allow_non_tournament` toggle still governs.
+    format: str | None = None
     # Ordered list of printing-preference keys (highest priority first).
     # Backwards-compatible: a bare string is also accepted.
     printing_strategy: list[str] | str | None = None
@@ -159,24 +165,51 @@ class PrintingsRequest(BaseModel):
     allow_non_tournament: bool = True
     allow_digital: bool = False
     disabled_sets: list[str] = []
+    format: str | None = None
     limit: int = 24
 
 
 # --------------------------- Helpers --------------------------------
+# Hard upper bound on a single decklist payload. ~5x the size of the
+# largest legitimate format (Commander = 100 unique cards) leaves room
+# for cubes / collection lists while preventing accidental or malicious
+# memory/CPU exhaustion via a giant POST body.
+_MAX_DECKLIST_ENTRIES = 2000
+_MAX_CARD_NAME_LEN = 200
+
+
+def _enforce_decklist_limits(entries: list[DecklistEntry]) -> list[DecklistEntry]:
+    if len(entries) > _MAX_DECKLIST_ENTRIES:
+        raise HTTPException(
+            400,
+            f"Decklist too large: {len(entries)} entries (max {_MAX_DECKLIST_ENTRIES}).",
+        )
+    for e in entries:
+        if len(e.name) > _MAX_CARD_NAME_LEN:
+            raise HTTPException(
+                400,
+                f"Card name too long ({len(e.name)} chars; max {_MAX_CARD_NAME_LEN}).",
+            )
+    return entries
+
+
 def _entries_from_input(d: DecklistInput) -> tuple[list[DecklistEntry], list[str]]:
     if d.entries:
-        return (
-            [
-                DecklistEntry(
-                    name=e["name"],
-                    qty=int(e.get("qty", 1)),
-                    section=e.get("section", "mainboard"),  # type: ignore[arg-type]
-                )
-                for e in d.entries
-                if e.get("name")
-            ],
-            [],
-        )
+        if len(d.entries) > _MAX_DECKLIST_ENTRIES:
+            raise HTTPException(
+                400,
+                f"Decklist too large: {len(d.entries)} entries (max {_MAX_DECKLIST_ENTRIES}).",
+            )
+        built = [
+            DecklistEntry(
+                name=e["name"],
+                qty=int(e.get("qty", 1)),
+                section=e.get("section", "mainboard"),  # type: ignore[arg-type]
+            )
+            for e in d.entries
+            if e.get("name")
+        ]
+        return _enforce_decklist_limits(built), []
     if d.url:
         try:
             result = import_from_url(d.url)
@@ -185,16 +218,29 @@ def _entries_from_input(d: DecklistInput) -> tuple[list[DecklistEntry], list[str
         except Exception as e:
             log.exception("URL import failed for %s", d.url)
             raise HTTPException(502, f"Importer failed: {e}") from e
-        return result.entries, result.warnings
+        return _enforce_decklist_limits(result.entries), result.warnings
     if d.text:
         result = parse_text(d.text)
-        return result.entries, result.warnings
+        return _enforce_decklist_limits(result.entries), result.warnings
     raise HTTPException(400, "decklist.text, decklist.url, or decklist.entries required")
 
 
-def _require_admin(x_admin_token: str | None = Header(default=None)) -> None:
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _require_admin(
+    request: Request,
+    x_admin_token: str | None = Header(default=None),
+) -> None:
+    # If no token is configured, only accept requests from loopback so a
+    # default deployment exposed on 0.0.0.0 can't be hijacked. This
+    # preserves the dev-time "just hit the endpoint" UX while closing the
+    # accidental-exposure footgun.
     if settings.admin_token is None:
-        return
+        client_host = request.client.host if request.client else None
+        if client_host in _LOOPBACK_HOSTS:
+            return
+        raise HTTPException(403, "Admin endpoint requires ADMIN_TOKEN for non-loopback access")
     if x_admin_token != settings.admin_token:
         raise HTTPException(403, "Invalid admin token")
 
@@ -365,7 +411,7 @@ def analyze_endpoint(req: AnalyzeRequest) -> dict:
     result = analyze_mod.analyze_cached(
         entries, aesthetics, req.include_sideboard, req.include_basics,
         req.printing_strategy, req.allow_non_tournament, req.disabled_sets,
-        req.allow_digital,
+        req.allow_digital, req.format,
     )
     elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
 
@@ -430,7 +476,9 @@ def list_printings(req: PrintingsRequest) -> dict:
                image_normal, image_art_crop,
                border_color, frame, lang, digital, full_art, textless,
                promo, promo_types, frame_effects, security_stamp, set_type,
-               released_at, price_usd, tournament_legal
+               released_at, price_usd, tournament_legal,
+               legal_standard, legal_pioneer, legal_modern, legal_legacy,
+               legal_vintage, legal_commander, legal_pauper
         FROM printings
         WHERE oracle_id = ?
           AND image_normal IS NOT NULL
@@ -439,9 +487,17 @@ def list_printings(req: PrintingsRequest) -> dict:
     with db.read_lock() as c:
         rows = c.execute(sql, [oracle_id]).fetchall()
     out = []
+    # First pass: apply filters strictly. Track each printing dict so we
+    # can rescue them in the fallback pass if the strict pass leaves no
+    # printings (e.g. the card has only silver-border Unhinged versions
+    # and the user has the non-tournament toggle off — they should still
+    # see the card with its overlay rather than an empty list).
+    all_built: list[dict] = []
     for (set_code, set_name, cn, img, art, border, frame, lang, digital,
          full_art, textless, promo, promo_types, frame_effects,
-         sec_stamp, set_type, released, price, tournament_legal) in rows:
+         sec_stamp, set_type, released, price, tournament_legal,
+         legal_standard, legal_pioneer, legal_modern, legal_legacy,
+         legal_vintage, legal_commander, legal_pauper) in rows:
         p = {
             "set": set_code,
             "set_name": set_name,
@@ -462,12 +518,22 @@ def list_printings(req: PrintingsRequest) -> dict:
             "released_at": released.isoformat() if released else None,
             "price_usd": price,
             "tournament_legal": tournament_legal,
+            "legal_standard": legal_standard,
+            "legal_pioneer": legal_pioneer,
+            "legal_modern": legal_modern,
+            "legal_legacy": legal_legacy,
+            "legal_vintage": legal_vintage,
+            "legal_commander": legal_commander,
+            "legal_pauper": legal_pauper,
         }
         if ae is not None and ae.match_py is not None and not ae.match_py(p):
             continue
+        all_built.append(p)
         if p["set"] in disabled_set_codes:
             continue
         if not req.allow_non_tournament and not analyze_mod._is_tournament_legal(p):
+            continue
+        if not analyze_mod._printing_legal_in_format(p, req.format):
             continue
         if not req.allow_digital and p.get("digital"):
             continue
@@ -478,6 +544,18 @@ def list_printings(req: PrintingsRequest) -> dict:
         out.append(p)
         if len(out) >= limit:
             break
+    # Graceful fallback: if the strict filters wiped out every printing
+    # of this aesthetic, fall back to the unfiltered (but predicate-
+    # matching) pool so the user still sees something. Mirrors the same
+    # fallback in analyze.analyze().
+    if not out and all_built:
+        for p in all_built:
+            if p["set"] in disabled_set_codes:
+                continue
+            p["is_tournament_legal"] = analyze_mod._is_tournament_legal(p)
+            out.append(p)
+            if len(out) >= limit:
+                break
     return {"oracle_id": oracle_id, "printings": out}
 
 
@@ -504,15 +582,27 @@ if settings.static_dir.exists():
         name="assets",
     )
 
+    _STATIC_ROOT = settings.static_dir.resolve()
+
     @app.get("/{full_path:path}")
     def spa_fallback(full_path: str, request: Request):
         # Don't intercept API
         if full_path.startswith("api/"):
             raise HTTPException(404)
-        candidate = settings.static_dir / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(candidate)
         index = settings.static_dir / "index.html"
+        if full_path:
+            try:
+                candidate = (settings.static_dir / full_path).resolve()
+            except (OSError, ValueError):
+                candidate = None
+            # Reject any path that escapes the static root after
+            # symlink/`..` resolution.
+            if candidate is not None and candidate.is_file():
+                try:
+                    candidate.relative_to(_STATIC_ROOT)
+                except ValueError:
+                    raise HTTPException(404)
+                return FileResponse(candidate)
         if index.exists():
             return FileResponse(index)
         return JSONResponse({"detail": "frontend not built"}, status_code=404)

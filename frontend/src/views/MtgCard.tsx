@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { PerCardExample } from '../api';
 
 /** Single canonical message for any "this card slot can't be filled" case.
@@ -6,9 +6,66 @@ import type { PerCardExample } from '../api';
  *  (Gallery, Drawer, future Compare). */
 export const NO_PRINTING_MESSAGE = 'No printing matches filters';
 
+/** Resilient `<img>` for Scryfall card art.
+ *
+ *  Scryfall's CDN occasionally serves transient 404/5xx responses (CDN
+ *  cache misses, rolling deploys, brief unavailability) or the browser
+ *  silently cancels a `loading="lazy"` request that hasn't reached the
+ *  viewport yet — both surface to the user as a stuck placeholder.
+ *
+ *  This wrapper retries once with a cache-buster query param when an
+ *  image errors out, which forces a fresh CDN fetch + bypasses any
+ *  poisoned browser-cache entry. After the retry fails we fall back to
+ *  hiding the image so the placeholder/caption can take over rather
+ *  than rendering a broken-image icon.
+ */
+export function CardImage({
+  src,
+  alt,
+  className,
+  loading = 'lazy',
+  draggable = false,
+}: {
+  src: string | null | undefined;
+  alt: string;
+  className?: string;
+  loading?: 'eager' | 'lazy';
+  draggable?: boolean;
+}) {
+  // `effective` is what we actually pass to <img>. We swap to a cache-
+  // busted URL on the first error and to `null` (hide) on the second.
+  const [effective, setEffective] = useState<string | null>(src ?? null);
+  const [retried, setRetried] = useState(false);
+  useEffect(() => {
+    setEffective(src ?? null);
+    setRetried(false);
+  }, [src]);
+  if (!effective) return null;
+  return (
+    <img
+      src={effective}
+      alt={alt}
+      className={className}
+      loading={loading}
+      draggable={draggable}
+      onError={() => {
+        if (!src) return;
+        if (!retried) {
+          // Append/refresh a cache-buster. Use timestamp so concurrent
+          // mounts don't collide on the same query value.
+          const sep = src.includes('?') ? '&' : '?';
+          setEffective(`${src}${sep}_r=${Date.now()}`);
+          setRetried(true);
+        } else {
+          setEffective(null);
+        }
+      }}
+    />
+  );
+}
+
 interface Props {
   name: string;
-  qty?: number;
   printing: PerCardExample | null | undefined;
   unavailable?: boolean;
   unresolved?: boolean;
@@ -21,9 +78,8 @@ interface Props {
   disableHover?: boolean;
 }
 
-export function MtgCard({
+export const MtgCard = memo(function MtgCard({
   name,
-  qty,
   printing,
   unavailable,
   unresolved,
@@ -56,13 +112,12 @@ export function MtgCard({
         onMouseLeave={() => setHover(null)}
       >
         {img ? (
-          <img src={img} alt={name} loading="lazy" draggable={false} />
+          <CardImage src={img} alt={name} />
         ) : (
           <div>
             {unresolved ? 'Unrecognized card' : name}
           </div>
         )}
-        {qty != null && img && <div className="qty-badge">{qty}×</div>}
         {overlay}
         {/* Diagonal red banner for non-tournament-legal printings. Only
             renders when the backend explicitly tagged the printing as
@@ -87,9 +142,9 @@ export function MtgCard({
       )}
       {hover && img && !disableHover && (
         <div className="card-popover" style={{ left: hover.x, top: hover.y }}>
-          <img src={img} alt="" />
+          <CardImage src={img} alt="" loading="eager" />
         </div>
       )}
     </div>
   );
-}
+});
