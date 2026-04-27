@@ -144,7 +144,7 @@ aesthetics:
       in: { set: ["sta", "soa"] }
 
   - id: showcase_mystical_archive_jp
-    label: "Mystical Archive (Japanese)"
+    label: "Mystical Archive (JP)"
     description: "Japanese-language alt-art Mystical Archive printings."
     group: "Showcase Treatment"
     match:
