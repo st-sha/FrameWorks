@@ -5,9 +5,9 @@ services:
     container_name: deckaesthetics
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "30303:30303"
     environment:
-      PORT: "8080"
+      PORT: "30303"
       SCRYFALL_REFRESH_HOURS: "24"
       # Cron schedule (UTC) for Scryfall refresh checks. Default polls hourly
       # at :15 from 09:00 to 13:00 UTC (a window around Scryfall's daily

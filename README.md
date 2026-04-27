@@ -27,7 +27,7 @@ Aesthetics are defined in YAML files under `rulesets/` so adding a new one
 docker compose up --build
 ```
 
-Then open http://localhost:8080. First boot downloads ~300 MB of Scryfall data; the
+Then open http://localhost:30303. First boot downloads ~300 MB of Scryfall data; the
 UI shows progress and starts working as soon as ingestion completes.
 
 ## Quick start (Unraid)
@@ -48,7 +48,7 @@ docker pull ghcr.io/st-sha/frameworks:latest
 
 | Variable                   | Default                | Description                                                  |
 | -------------------------- | ---------------------- | ------------------------------------------------------------ |
-| `PORT`                     | `8080`                 | HTTP port the server listens on                              |
+| `PORT`                     | `30303`                | HTTP port the server listens on                              |
 | `DATA_DIR`                 | `/data`                | Where DuckDB and the Scryfall JSON cache live                |
 | `RULESETS_DIR`             | `/app/rulesets`        | Directory of `*.yaml` aesthetic definitions                  |
 | `SCRYFALL_REFRESH_HOURS`   | `6`                    | Background refresh cadence                                   |
@@ -90,7 +90,7 @@ aesthetics:
 Then either restart the container or call:
 
 ```bash
-curl -X POST http://localhost:8080/api/admin/reload-rulesets \
+curl -X POST http://localhost:30303/api/admin/reload-rulesets \
      -H "X-Admin-Token: $TOKEN"
 ```
 
@@ -122,12 +122,12 @@ template.
 python -m venv .venv
 .venv\Scripts\activate            # PowerShell: .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-uvicorn backend.app.main:app --reload --port 8080
+uvicorn backend.app.main:app --reload --port 30303
 
 # Frontend
 cd frontend
 npm install
-npm run dev                       # http://localhost:5173, proxies /api → :8080
+npm run dev                       # http://localhost:5173, proxies /api → :30303
 
 # Tests
 pytest -q

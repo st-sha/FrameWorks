@@ -5,7 +5,7 @@ body = json.dumps({
     'include_sideboard': True,
     'include_basics': False,
 }).encode()
-req = urllib.request.Request('http://127.0.0.1:8080/api/analyze', data=body, headers={'content-type': 'application/json'})
+req = urllib.request.Request('http://127.0.0.1:30303/api/analyze', data=body, headers={'content-type': 'application/json'})
 r = json.loads(urllib.request.urlopen(req, timeout=60).read())
 print('totals:', r['totals'])
 print('warnings:', r['warnings'][:5])

@@ -13,7 +13,7 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8080 \
+    PORT=30303 \
     DATA_DIR=/data \
     RULESETS_DIR=/app/rulesets \
     STATIC_DIR=/app/frontend/dist
@@ -38,7 +38,7 @@ COPY --from=frontend /app/frontend/dist ./frontend/dist
 RUN mkdir -p /data
 VOLUME ["/data"]
 
-EXPOSE 8080
+EXPOSE 30303
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" || exit 1
 

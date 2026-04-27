@@ -55,7 +55,7 @@ def load_settings() -> Settings:
     data_dir.mkdir(parents=True, exist_ok=True)
 
     return Settings(
-        port=_env_int("PORT", 8080),
+        port=_env_int("PORT", 30303),
         data_dir=data_dir,
         rulesets_dir=rulesets_dir,
         static_dir=static_dir,
