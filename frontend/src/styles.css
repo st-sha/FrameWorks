@@ -1681,6 +1681,7 @@ a.cov-mark:hover { background: var(--accent); }
 .ot-qty { width: 40px; font-variant-numeric: tabular-nums; color: var(--accent); }
 .ot-card { font-weight: 600; }
 .ot-other .chip { font-size: 10px; padding: 1px 6px; margin: 1px 2px; }
+.ot-other-chip { display: inline-block; position: relative; }
 
 /* ---- Set Heatmap ---- */
 .setheat-scroll { overflow: auto; max-width: 100%; border: 1px solid var(--border); border-radius: 4px; }
@@ -2152,8 +2153,7 @@ a.cov-mark:hover { background: var(--accent); }
   justify-items: stretch;
 }
 .spotlight-group.g-showcase .chip-pair {
-  display: inline-flex;
-  width: 100%;
+  display: flex;
   min-width: 0;
 }
 .spotlight-group.g-showcase .chip-pair .chip {
@@ -2166,6 +2166,19 @@ a.cov-mark:hover { background: var(--accent); }
   align-items: center;
   justify-content: space-between;
   gap: 6px;
+  overflow: hidden;
+}
+/* Truncate long labels (e.g. "Mystical Archive (Japanese)") with an
+ * ellipsis so the count badge always stays inside the chip border. */
+.spotlight-group.g-showcase .chip .chip-label {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.spotlight-group.g-showcase .chip .chip-count {
+  flex: 0 0 auto;
 }
 @media (max-width: 560px) {
   .spotlight-group.g-showcase .chips {
@@ -2257,14 +2270,27 @@ a.cov-mark:hover { background: var(--accent); }
 .printings-popover.v2 .pp-featured-meta .pp-set { font-weight: 700; }
 .printings-popover.v2 .pp-featured-meta .pp-price { margin-left: auto; color: var(--accent-2); font-variant-numeric: tabular-nums; }
 
+.printings-popover.v2 .pp-body {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 6px;
+}
+.printings-popover.v2 .pp-body .pp-featured {
+  flex: 1;
+  min-width: 0;
+}
 .printings-popover.v2 .pp-strip {
   display: flex;
+  flex-direction: column;
   gap: 4px;
-  margin-top: 6px;
-  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 450px;
+  width: 88px;
+  flex-shrink: 0;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
-  padding-bottom: 2px;
+  padding-right: 2px;
 }
 .printings-popover.v2 .pp-strip-cell {
   position: relative;
@@ -2273,15 +2299,15 @@ a.cov-mark:hover { background: var(--accent); }
   border-radius: 4px;
   padding: 0;
   flex: 0 0 auto;
-  width: 84px;
+  width: 88px;
   cursor: pointer;
   overflow: hidden;
   transition: transform 80ms, border-color 80ms;
 }
 .printings-popover.v2 .pp-strip-cell img { display: block; width: 100%; height: auto; }
-.printings-popover.v2 .pp-strip-cell:hover { transform: translateY(-2px); border-color: var(--accent); }
+.printings-popover.v2 .pp-strip-cell:hover { transform: translateX(-2px); border-color: var(--accent); }
 .printings-popover.v2 .pp-strip-cell.active { outline: 2px solid var(--accent); border-color: var(--accent); }
-.printings-popover.v2 .pp-strip-cell.skeleton { width: 84px; aspect-ratio: 5 / 7; }
+.printings-popover.v2 .pp-strip-cell.skeleton { width: 88px; aspect-ratio: 5 / 7; }
 .printings-popover.v2 .pp-strip-rank {
   position: absolute;
   top: 2px;
@@ -2324,14 +2350,9 @@ a.cov-mark:hover { background: var(--accent); }
   color: #fff;
   border-color: var(--accent);
 }
-/* Pinned: allow a long printings strip to wrap onto multiple rows and
-   scroll vertically inside the popover so the user can browse without the
-   overall popover overflowing the viewport. */
+/* Pinned: the strip is already vertical with overflow-y; no extra overrides needed. */
 .printings-popover.v2.pinned .pp-strip {
-  flex-wrap: wrap;
-  max-height: 260px;
-  overflow-y: auto;
-  overflow-x: hidden;
+  max-height: 420px;
 }
 
 /* === Phase 4: Coverage table upgrades === */

@@ -421,8 +421,8 @@ interface HoverState {
 
 /**
  * Hover popover redesigned:
- *   - Single enlarged card on top (~340 wide at MTG aspect ratio).
- *   - Strip of small alternates below (~96 wide each).
+ *   - Single enlarged card on the left (~284 wide at MTG aspect ratio).
+ *   - Vertical strip of small alternates on the right (~88 wide each).
  *   - Hovering an alternate swaps it into the enlarged slot.
  *   - Arrow keys move the featured selection; Esc closes.
  *   - Caches printings per (oracle, aesthetic) via the parent's useRef.
@@ -440,11 +440,13 @@ function PrintingsPopover({
 }) {
   const { card, anchor, printings } = hover;
   const PAD = 16;
-  const W = 380;
-  const FEAT_H = 530; // enlarged card height
-  const STRIP_H = 130;
+  const W = 400;
   const HEADER_H = 30;
-  const H = FEAT_H + STRIP_H + HEADER_H + 24;
+  // Strip is side-by-side with featured card so doesn't add to height.
+  // Featured card takes (W - padding - gap - strip) wide → 5:7 aspect ratio.
+  const FEAT_W = W - 16 - 8 - 92; // 284px
+  const FEAT_H = Math.round(FEAT_W * 7 / 5) + 32; // +32 for meta row
+  const H = FEAT_H + HEADER_H + 24;
 
   // When pinned, freeze the position at the moment of pinning so the popover
   // doesn't drift if the cursor moves later.
@@ -476,10 +478,10 @@ function PrintingsPopover({
         onClose();
         return;
       }
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
         e.preventDefault();
         setFeaturedIdx((i) => Math.min(printings.length - 1, i + 1));
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
         e.preventDefault();
         setFeaturedIdx((i) => Math.max(0, i - 1));
       } else if (e.key === 'Enter') {
@@ -521,6 +523,7 @@ function PrintingsPopover({
         )}
       </div>
 
+      <div className="pp-body">
       <div className="pp-featured">
         {featured ? (
           <a
@@ -582,6 +585,7 @@ function PrintingsPopover({
         {printings && printings.length === 0 && (
           <div className="pp-empty">No matching printings.</div>
         )}
+      </div>
       </div>
     </div>
   );

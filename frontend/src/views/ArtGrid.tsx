@@ -10,20 +10,18 @@ export function ArtGridView() {
   const selected = useStore((s) => s.selectedAesthetics);
   const highlightPreferred = useStore((s) => s.artGridPreferredHighlight);
   const setHighlightPreferred = useStore((s) => s.setArtGridPreferredHighlight);
-  const { hasSpot: hasSpotlight, match: spotMatch } = useSpotlightMatcher();
+  const { match: spotMatch } = useSpotlightMatcher();
 
   // Art Grid is a coverage matrix: every (resolved) card row is shown,
-  // unless the spotlight (top-bar include/exclude or card-name search)
-  // filters it out — in which case the row is omitted entirely.
-  // Sidebar filters narrow the COLUMNS that are visible; empty columns
-  // are dropped so they don't waste horizontal space.
+  // unless the spotlight (top-bar include/exclude) OR the free-text
+  // card-name / Scryfall-syntax filter rules it out — in which case the
+  // row is omitted entirely. `useSpotlightMatcher().match` already ANDs
+  // both signals together, so we always run it (not just when a
+  // spotlight chip is active — otherwise the textbox filter would be
+  // silently ignored on this view).
   const rows = useMemo(
-    () => {
-      const base = result.per_card.filter((c) => c.resolved);
-      if (!hasSpotlight) return base;
-      return base.filter((c) => spotMatch(c));
-    },
-    [result.per_card, hasSpotlight, spotMatch],
+    () => result.per_card.filter((c) => c.resolved && spotMatch(c)),
+    [result.per_card, spotMatch],
   );
 
   const cols = useMemo(() => {

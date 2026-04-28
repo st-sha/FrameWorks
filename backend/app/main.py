@@ -533,14 +533,20 @@ def list_printings(req: PrintingsRequest) -> dict:
             continue
         if not req.allow_non_tournament and not analyze_mod._is_tournament_legal(p):
             continue
-        if not analyze_mod._printing_legal_in_format(p, req.format):
-            continue
+        # Format-legality is *not* a hard filter here either: surface the
+        # printing and let the UI flag it via `legal_in_format`. This
+        # mirrors the analyze() behaviour so the popover doesn't show
+        # a different filtered pool than the main Gallery card.
         if not req.allow_digital and p.get("digital"):
             continue
         # Tag each row with its tournament-legality so the frontend can
         # paint a warning overlay on the non-legal printings that the
         # user has opted to allow.
         p["is_tournament_legal"] = analyze_mod._is_tournament_legal(p)
+        p["legal_in_format"] = (
+            analyze_mod._printing_legal_in_format(p, req.format)
+            if req.format else None
+        )
         out.append(p)
         if len(out) >= limit:
             break
@@ -553,6 +559,10 @@ def list_printings(req: PrintingsRequest) -> dict:
             if p["set"] in disabled_set_codes:
                 continue
             p["is_tournament_legal"] = analyze_mod._is_tournament_legal(p)
+            p["legal_in_format"] = (
+                analyze_mod._printing_legal_in_format(p, req.format)
+                if req.format else None
+            )
             out.append(p)
             if len(out) >= limit:
                 break

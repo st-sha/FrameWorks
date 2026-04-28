@@ -275,12 +275,18 @@ def _resolve_spec(spec: str):
     return _SPEC_TABLE.get((kind, value))
 
 
-def _printing_to_example(p: dict) -> dict:
+def _printing_to_example(p: dict, fmt: str | None = None) -> dict:
     """Project a raw printing dict down to the public PerCardExample shape.
 
     Includes `is_tournament_legal` so the frontend can paint a warning
     overlay on non-legal printings (gold-border WC, silver-border
     un-sets, 30A, memorabilia, …) when the user has opted to allow them.
+
+    When `fmt` is set, also emits `legal_in_format` so the frontend can
+    paint an analogous "Not legal in <fmt>" banner on printings of cards
+    that fall outside the chosen tournament format. We surface (rather
+    than filter) so the user still sees the card art with a clear
+    "this card isn't tournament legal here" indicator.
     """
     return {
         "set": p["set"],
@@ -292,6 +298,7 @@ def _printing_to_example(p: dict) -> dict:
         "released_at": p["released_at"],
         "frame": p["frame"],
         "is_tournament_legal": _is_tournament_legal(p),
+        "legal_in_format": _printing_legal_in_format(p, fmt) if fmt else None,
         # Printing-aesthetic fields surfaced so the frontend
         # Scryfall-syntax filter can evaluate `border:`, `is:foil`,
         # `is:promo`, `is:fullart`, `is:textless`, `is:digital`,
@@ -384,7 +391,7 @@ def _printing_legal_in_format(p: dict, fmt: str | None) -> bool:
     return bool(val)
 
 
-def _python_sort_keys(printing_strategy: list[str] | str | None):
+def _python_sort_keys(printing_strategy: list[str] | str | None, fmt: str | None = None):
     """Compose a list of sort-key callables matching `_order_clause`.
 
     The first key always demotes digital printings (paper-first). Then the
@@ -410,6 +417,12 @@ def _python_sort_keys(printing_strategy: list[str] | str | None):
         lambda p: 0 if not p.get("digital") else 1,
         lambda p: 0 if _is_tournament_legal(p) else 1,
     ]
+    if fmt:
+        # Demote printings illegal in the chosen format so the legal
+        # alternatives bubble up as the default. Cards with NO legal
+        # printing fall back to their best illegal printing (which is
+        # then surfaced to the UI with a "Not legal in <fmt>" banner).
+        keys.append(lambda p: 0 if _printing_legal_in_format(p, fmt) else 1)
     seen: set[str] = {"paper"}  # the implicit paper-first key
     for s in printing_strategy or []:
         if s in seen:
@@ -563,8 +576,14 @@ def analyze(
                 continue
             if not allow_digital and p.get("digital"):
                 continue
-            if not _printing_legal_in_format(p, format):
-                continue
+            # NB: format-legality is intentionally NOT a hard filter.
+            # Cards illegal in the user's format remain in the pool but
+            # are demoted by `_python_sort_keys(…, fmt)` so legal
+            # printings sort first, and the `_printing_to_example` call
+            # tags each printing with `legal_in_format` so the UI can
+            # paint a "Not legal in <fmt>" overlay. We still emit a
+            # per-card warning below for cards whose chosen default is
+            # illegal so the format dropdown clearly does *something*.
             printings_by_oracle[oid].append(p)
 
         # Graceful fallback: if the legality / digital filters above
@@ -574,21 +593,10 @@ def analyze(
         # has an image to display. The non-legal printings will still
         # render the diagonal "Not tournament legal" overlay, but the
         # card won't silently vanish from the user's deck.
-        #
-        # IMPORTANT: this rescue is skipped when the user has explicitly
-        # selected a `format`. In that case "no legal printing" is the
-        # whole point of the filter — silently re-adding the card would
-        # make the format dropdown appear to do nothing. Instead we
-        # leave the card with no `default` printing and surface a
-        # warning so the UI can call out "X is not legal in <format>".
         rescued_oracles: set[str] = set()
-        format_blocked: set[str] = set()
         for oid in oracle_ids:
             if oid not in printings_by_oracle or not printings_by_oracle[oid]:
-                if format:
-                    format_blocked.add(oid)
-                else:
-                    rescued_oracles.add(oid)
+                rescued_oracles.add(oid)
         if rescued_oracles:
             for row in all_rows:
                 oid = row[0]
@@ -598,19 +606,12 @@ def analyze(
                 if set_code in disabled_set_codes:
                     continue
                 printings_by_oracle[oid].append(_row_to_printing(row))
-        if format_blocked:
-            # Map oracle_id -> display name for the warning text.
-            blocked_names = sorted(
-                {display_name.get(n, n)
-                 for n, oid in norm_to_oracle.items()
-                 if oid in format_blocked}
-            )
-            for nm in blocked_names:
-                warnings.append(f"Not legal in {format}: {nm}")
 
         # Sort each oracle's printings by the user-requested preference
-        # using the equivalent Python sort keys.
-        sort_keys = _python_sort_keys(printing_strategy)
+        # using the equivalent Python sort keys. Pass `format` so format-
+        # illegal printings are demoted (but not removed) when the user
+        # has selected a tournament format.
+        sort_keys = _python_sort_keys(printing_strategy, format)
         def composite(p: dict):
             return tuple(k(p) for k in sort_keys)
         for oid, plist in printings_by_oracle.items():
@@ -654,7 +655,7 @@ def analyze(
                 for aid in sat:
                     counts_for_oid[aid] = counts_for_oid.get(aid, 0) + 1
                     if aid not in covered_for_oid:
-                        example_printing[aid][oid] = _printing_to_example(p)
+                        example_printing[aid][oid] = _printing_to_example(p, format)
                         available_by_aesthetic[aid].add(oid)
                         covered_for_oid.add(aid)
             version_counts[oid] = counts_for_oid
@@ -665,7 +666,7 @@ def analyze(
             if not plist:
                 continue
             top = plist[0]
-            default_printing[oid] = _printing_to_example(top)
+            default_printing[oid] = _printing_to_example(top, format)
             for aid in printing_satisfies.get((top["set"], top["collector_number"]), ()):
                 default_satisfies[aid].add(oid)
 
@@ -678,6 +679,25 @@ def analyze(
             for oid, ex in by_oid.items():
                 key = (ex.get("set"), ex.get("collector_number"))
                 ex["satisfies"] = sorted(printing_satisfies.get(key, set()))
+
+        # Surface a per-card warning for any card whose best-ranked
+        # printing is still illegal in the chosen format. The card's
+        # image is shown anyway (with an overlay banner via the
+        # `legal_in_format` field), so the format dropdown clearly
+        # *does* something even though it no longer hides cards.
+        if format:
+            blocked_oids = {
+                oid for oid, dp in default_printing.items()
+                if dp.get("legal_in_format") is False
+            }
+            if blocked_oids:
+                blocked_names = sorted(
+                    {display_name.get(n, n)
+                     for n, oid in norm_to_oracle.items()
+                     if oid in blocked_oids}
+                )
+                for nm in blocked_names:
+                    warnings.append(f"Not legal in {format}: {nm}")
 
     total_unique = len(qty_by_norm)
     total_qty = sum(qty_by_norm.values())

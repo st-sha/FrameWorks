@@ -176,16 +176,23 @@ export function OutliersView() {
                     card.available_aesthetics.map((id) => {
                       const a = aesById.get(id);
                       if (!a) return null;
+                      const img = card.examples[id]?.image_normal ?? null;
                       return (
-                        <button
-                          key={id}
-                          type="button"
-                          className={'chip linklike ' + groupClass(a.group)}
-                          onClick={() => openDrawer(id)}
-                          title={`${a.label} — ${a.group ?? 'Other'}`}
-                        >
-                          {a.label}
-                        </button>
+                        <span key={id} className={'hover-preview ot-other-chip' + (img ? '' : '')}>
+                          <button
+                            type="button"
+                            className={'chip linklike ' + groupClass(a.group)}
+                            onClick={() => openDrawer(id)}
+                            title={`${a.label} — ${a.group ?? 'Other'}`}
+                          >
+                            {a.label}
+                          </button>
+                          {img && (
+                            <span className="hover-preview-card" aria-hidden>
+                              <img src={img} alt="" loading="lazy" />
+                            </span>
+                          )}
+                        </span>
                       );
                     })
                   )}

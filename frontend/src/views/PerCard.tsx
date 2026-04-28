@@ -34,8 +34,11 @@ export function PerCardView() {
     // the row set; the user can't toggle it off from this view.
     const forced = new Set(selected);
     if (aesthetics.some((a) => a.id === 'paper_only')) forced.add('paper_only');
-    return filterCards(result.per_card, forced, aesthetics);
-  }, [result.per_card, selected, aesthetics]);
+    // ALSO apply the spotlight + free-text card-name / Scryfall-syntax
+    // filter here (not just inside the row render) so the row count,
+    // group coverage stats, and empty state all reflect the visible set.
+    return filterCards(result.per_card, forced, aesthetics).filter(spotMatch);
+  }, [result.per_card, selected, aesthetics, spotMatch]);
 
   // Show columns for selected aesthetics, or all if nothing is selected.
   // Preserve canonical group ordering from groupAesthetics().
@@ -230,7 +233,6 @@ export function PerCardView() {
         </thead>
         <tbody>
           {sorted.map((c) => {
-            if (!spotMatch(c)) return null;
             return (
               <Row
                 key={c.name_normalized}

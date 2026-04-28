@@ -48,6 +48,12 @@ export interface PerCardExample {
    *  frontend overlays a red "Not tournament legal" banner on these.
    *  Optional for backwards compatibility. */
   is_tournament_legal?: boolean;
+  /** Tri-state: `null` when no format filter is active, `true`/`false`
+   *  when the printing is legal/illegal in the user's chosen format.
+   *  When `false`, the frontend overlays a "Not legal in <format>"
+   *  banner so the user can see the card art but knows it can't be
+   *  played in their format. */
+  legal_in_format?: boolean | null;
   // ---- Printing-aesthetic fields surfaced for the Scryfall-syntax
   //      filter (border:, is:foil, is:promo, is:fullart, …). All
   //      optional so older backends still type-check. ----

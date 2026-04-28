@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from 'react';
 import type { PerCardExample } from '../api';
+import { useStore } from '../store';
 
 /** Single canonical message for any "this card slot can't be filled" case.
  *  Centralized so the dim treatment + copy stay identical across views
@@ -91,6 +92,7 @@ export const MtgCard = memo(function MtgCard({
 }: Props) {
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
   const img = printing?.image_normal;
+  const format = useStore((s) => s.format);
 
   return (
     <div className="card-cell">
@@ -126,6 +128,15 @@ export const MtgCard = memo(function MtgCard({
         {img && printing && printing.is_tournament_legal === false && (
           <div className="not-legal-overlay" aria-hidden>
             <span className="not-legal-band">Not tournament legal</span>
+          </div>
+        )}
+        {/* Format-illegal printings get an analogous banner. Suppressed
+            when the tournament-legal banner is already showing so we
+            don't double-stamp the card. */}
+        {img && printing && printing.is_tournament_legal !== false &&
+         printing.legal_in_format === false && (
+          <div className="not-legal-overlay" aria-hidden>
+            <span className="not-legal-band">Not legal in {format || 'format'}</span>
           </div>
         )}
       </div>

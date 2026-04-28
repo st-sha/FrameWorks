@@ -1188,7 +1188,7 @@ function SpotlightPicker() {
                       aria-pressed={isInclude}
                       title={inclTitle}
                     >
-                      {a.label}
+                      <span className="chip-label">{a.label}</span>
                       <span className="chip-count">{cn}</span>
                     </button>
                   </span>
