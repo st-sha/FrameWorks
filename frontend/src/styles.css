@@ -3019,3 +3019,252 @@ h1.brand-row .loading-spinner {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* ============================================================
+   === MOBILE — responsive breakpoints (≤768px)             ===
+   ============================================================
+   Strategy:
+   - Single-column layout: left panel slides in as an overlay.
+   - Mobile menu button (☰) in toolbar reveals the overlay.
+   - Tap-outside backdrop closes it.
+   - Toolbar tabs wrap onto two rows and scroll horizontally.
+   - Gallery popover becomes a bottom sheet.
+   - Touch targets bumped to 44px min.
+   ============================================================ */
+
+/* --- Mobile menu button: hidden on desktop --- */
+.mobile-menu-btn {
+  display: none;
+}
+.mobile-backdrop {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* ---- Layout: single column, left panel as overlay ---- */
+  .app {
+    display: block;
+    height: auto;
+    min-height: 100dvh;
+  }
+  .app.left-collapsed {
+    grid-template-columns: unset;
+  }
+
+  /* Left panel: hidden off-screen by default, slides in when open */
+  .left {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(340px, 90vw);
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    box-shadow: none;
+    /* Keep desktop overflow scroll */
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .app.mobile-menu-open .left {
+    transform: translateX(0);
+    box-shadow: 4px 0 32px rgba(0, 0, 0, 0.7);
+  }
+  /* Hide the desktop collapse toggle on mobile */
+  .left-collapse-toggle { display: none; }
+
+  /* Semi-transparent backdrop behind the open panel */
+  .mobile-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 199;
+    animation: fadeIn 160ms ease-out;
+  }
+
+  /* Right panel: full width, starts at top */
+  .right {
+    width: 100%;
+    min-height: 100dvh;
+    padding: 12px 12px 24px;
+  }
+
+  /* Mobile menu button: visible */
+  .mobile-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    font-size: 18px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    flex-shrink: 0;
+  }
+  .mobile-menu-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  /* ---- Toolbar: allow wrapping, horizontal scroll for tabs ---- */
+  .toolbar.tabbar {
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 0 10px;
+    position: sticky;
+    top: 0;
+  }
+  .tabgroups {
+    flex: 1 1 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    display: flex;
+    gap: 0;
+  }
+  .tabgroups::-webkit-scrollbar { display: none; }
+  /* Card filter takes its own row below tabs */
+  .card-name-filter {
+    flex: 1 1 100%;
+    order: 10;
+  }
+  /* Size slider hidden on mobile (use default size) */
+  .size-slider { display: none; }
+  /* Density selector: compact on mobile */
+  .density-slider { order: 10; flex: 1 1 100%; }
+
+  /* ---- Stats row below toolbar ---- */
+  .toolbar .muted {
+    order: 11;
+    flex: 1 1 100%;
+    font-size: 11px;
+  }
+  .toolbar .spacer { display: none; }
+
+  /* ---- Spotlight bar: always collapsed on mobile ---- */
+  .spotlight-bar {
+    margin-bottom: 6px;
+  }
+  .spotlight-groups {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+
+  /* ---- Gallery card grid: 2 columns minimum ---- */
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 10px;
+  }
+  .card-grid.dense {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  }
+
+  /* ---- Drawer: full-screen on mobile ---- */
+  .drawer {
+    width: 100vw;
+    left: 0;
+    right: 0;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 12px 12px 0 0;
+    padding: 16px 14px 32px;
+    top: auto;
+    max-height: 92dvh;
+    overflow-y: auto;
+  }
+  .drawer .close {
+    top: 12px;
+    right: 12px;
+  }
+
+  /* ---- Gallery printings popover: bottom sheet ---- */
+  .printings-popover.v2 {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    top: auto !important;
+    width: 100% !important;
+    max-height: 75dvh;
+    border-radius: 16px 16px 0 0;
+    border: none;
+    border-top: 1px solid var(--border);
+    overflow-y: auto;
+    z-index: 150;
+    animation: slideUp 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  @keyframes slideUp {
+    from { transform: translateY(30%); opacity: 0; }
+    to   { transform: translateY(0);   opacity: 1; }
+  }
+  .printings-popover.v2 .pp-body {
+    flex-direction: column;
+  }
+  .printings-popover.v2 .pp-strip {
+    flex-direction: row;
+    width: 100%;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .printings-popover.v2.pinned .pp-strip {
+    max-height: none;
+  }
+
+  /* ---- Coverage table: allow horizontal scroll (already does) ---- */
+  .coverage-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ---- Art grid: already scrolls, reduce padding ---- */
+  .art-grid-wrap {
+    max-height: calc(100dvh - 100px);
+  }
+
+  /* ---- Insight views: allow overflow ---- */
+  .insight-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ---- Import block: reduce padding ---- */
+  .import-block textarea {
+    rows: 6;
+    min-height: 100px;
+  }
+
+  /* ---- Touch target sizes ---- */
+  .chip {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+  .tab {
+    padding: 8px 10px;
+    min-height: 36px;
+  }
+  button {
+    min-height: 36px;
+  }
+  button.left-collapse-toggle,
+  button.pref-x,
+  button.group-collapse,
+  button.spotlight-group-collapse {
+    min-height: unset;
+  }
+}
+
+/* Very narrow phones (≤420px): single-column chip groups */
+@media (max-width: 420px) {
+  .spotlight-groups {
+    grid-template-columns: 1fr;
+  }
+  .spotlight-group.g-showcase {
+    grid-column: auto;
+  }
+  .card-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

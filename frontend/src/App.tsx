@@ -136,8 +136,17 @@ export function App() {
     return filterCards(s.result.per_card, s.selectedAesthetics, s.aesthetics).length;
   }, [s.result, s.selectedAesthetics, s.aesthetics]);
 
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   return (
-    <div className={'app' + (s.leftPanelCollapsed ? ' left-collapsed' : '')}>
+    <div className={'app' + (s.leftPanelCollapsed ? ' left-collapsed' : '') + (mobileMenuOpen ? ' mobile-menu-open' : '')}>
+      {mobileMenuOpen && (
+        <div
+          className="mobile-backdrop"
+          onClick={() => setMobileMenuOpen(false)}
+          aria-hidden
+        />
+      )}
       <aside className="left">
         <button
           type="button"
@@ -444,6 +453,15 @@ export function App() {
         style={{ ['--card-size' as never]: `${resolveCardSize(s.view, s.cardSizeByView)}px` }}
       >
         <div className="toolbar tabbar">
+          <button
+            type="button"
+            className="mobile-menu-btn"
+            aria-label="Open filters"
+            title="Filters & settings"
+            onClick={() => setMobileMenuOpen(true)}
+          >
+            ☰
+          </button>
           <ViewTabs view={s.view} setView={s.setView} />
           {(s.view === 'gallery' || s.view === 'art' || s.view === 'percard') && (
             <CardFilterInput
